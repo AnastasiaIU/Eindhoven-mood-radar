@@ -8,6 +8,9 @@ builder.Services.AddControllers();
 // Register mock data service (Phase 1 - development)
 builder.Services.AddSingleton<IMockDataService, MockDataService>();
 
+// Register mood update background service (runs every 15 minutes)
+builder.Services.AddHostedService<MoodUpdateService>();
+
 // Configure CORS for frontend access (localhost:3000 for Next.js dev)
 builder.Services.AddCors(options =>
 {
