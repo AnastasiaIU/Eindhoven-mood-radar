@@ -1,0 +1,100 @@
+# C# / .NET build artifacts
+bin/
+obj/
+*.dll
+*.exe
+*.pdb
+*.o
+*.a
+*.so
+*.dylib
+
+# Visual Studio
+.vs/
+.vscode/
+*.user
+*.userosscache
+*.sln.docstates
+.DS_Store
+
+# IDE
+.idea/
+*.swp
+*.swo
+*~
+.project
+.classpath
+.c9/
+*.launch
+.settings/
+.vscode-test/
+
+# NuGet
+*.nupkg
+*.snupkg
+.nuget/
+packages/
+.nuget/packages/
+*.nuget.props
+*.nuget.targets
+
+# Rider
+.idea/
+*.sln.iml
+riderModule.iml
+
+# ASP.NET Core
+appsettings.Development.json
+appsettings.Production.json
+secrets.json
+.env
+.env.local
+
+# Python (for AI/ML components in Phase 2)
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+*.egg
+*.egg-info/
+dist/
+build/
+venv/
+env/
+.venv
+
+# Node/npm (for frontend when added)
+node_modules/
+npm-debug.log
+yarn-error.log
+dist/
+.next/
+out/
+
+# OS
+Thumbs.db
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+
+# Runtime data
+pids/
+*.pid
+*.seed
+*.pid.lock
+
+# Testing
+coverage/
+.nyc_output/
+.jest/
+
+# Misc
+*.bak
+*.tmp
+.cache/
+temp/
