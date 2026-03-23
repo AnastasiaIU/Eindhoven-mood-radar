@@ -1,10 +1,10 @@
 using DotNetEnv;
 using MoodRadar.API.Services;
 using MoodRadar.API.Data;
-using DotNetEnv;
 using Microsoft.EntityFrameworkCore;
 
 Env.Load();
+﻿using MoodRadar.API.Services;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -24,6 +24,12 @@ builder.Services.AddHttpClient<TicketmasterService>()
         client.Timeout = TimeSpan.FromSeconds(30);
     });
 builder.Services.AddSingleton<ITicketmasterService>(sp => sp.GetRequiredService<TicketmasterService>());
+// ⚡ Register Swagger services
+builder.Services.AddEndpointsApiExplorer();
+builder.Services.AddSwaggerGen();
+
+// Register mock data service (Phase 1 - development)
+builder.Services.AddSingleton<IMockDataService, MockDataService>();
 
 // Register Weather service as Singleton with HttpClient and service provider
 // Singleton ensures the in-memory weather cache persists across requests
@@ -88,6 +94,11 @@ var allowedOrigins = builder.Environment.IsProduction()
 
 // Configure CORS for frontend access
 // Configure CORS
+// Register HolidayService
+builder.Services.AddHttpClient<HolidayService>();
+builder.Services.AddScoped<HolidayService>();
+
+// Configure CORS for frontend access
 builder.Services.AddCors(options =>
 {
     options.AddPolicy("AllowFrontend", policy =>
@@ -138,6 +149,7 @@ if (app.Environment.IsDevelopment())
 }
 // Enable Swagger middleware
 // Middleware
+// Enable Swagger middleware
 app.UseSwagger();
 app.UseSwaggerUI();
 
