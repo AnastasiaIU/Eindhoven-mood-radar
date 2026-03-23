@@ -41,8 +41,12 @@ builder.Services.AddSingleton<IWeatherService>(sp =>
     var logger = sp.GetRequiredService<ILogger<WeatherService>>();
     return new WeatherService(httpClient, serviceProvider, logger);
 });
+// Register Swagger services
+builder.Services.AddEndpointsApiExplorer();
+builder.Services.AddSwaggerGen();
 
-// Register mood update background service (runs every 15 minutes)
+// Register other services
+builder.Services.AddScoped<FootballService>();
 builder.Services.AddHostedService<MoodUpdateService>();
 
 // Define allowed origins based on environment
@@ -51,6 +55,7 @@ var allowedOrigins = builder.Environment.IsProduction()
     : new[] { "http://localhost:3000" };
 
 // Configure CORS for frontend access
+// Configure CORS
 builder.Services.AddCors(options =>
 {
     options.AddPolicy("AllowFrontend", policy =>
@@ -60,6 +65,13 @@ builder.Services.AddCors(options =>
             .AllowAnyMethod()
             .AllowAnyHeader();
     });
+});
+
+// Register HttpClient with API token
+builder.Services.AddHttpClient("football", client =>
+{
+    client.BaseAddress = new Uri("https://api.football-data.org/v4/");
+    client.DefaultRequestHeaders.Add("X-Auth-Token", builder.Configuration["FootballApi:ApiKey"]);
 });
 
 var app = builder.Build();
@@ -93,11 +105,14 @@ if (app.Environment.IsDevelopment())
 if (app.Environment.IsDevelopment())
 {
 }
+// Enable Swagger middleware
+app.UseSwagger();
+app.UseSwaggerUI();
 
 app.UseCors("AllowFrontend");
-
 app.UseAuthorization();
 
+// Map controllers
 app.MapControllers();
 
 app.Run();
