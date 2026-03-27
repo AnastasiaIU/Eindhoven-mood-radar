@@ -8,17 +8,18 @@
 
 ## Overview
 
-This document defines the JSON contracts for all REST API endpoints. During Phase 1, all endpoints return mock data. Phase 2 will replace mock data with live data from the database and external API connectors while maintaining the same JSON contracts.
+This document defines the JSON contracts for REST API endpoints. **The backend now live-polls Ticketmaster Discovery API** and serves events from an in-memory cache. Phase 2 will add database persistence while maintaining these JSON contracts.
 
-### Common Response Envelope
+**⚠️ CRITICAL DATA LIMITATION**: Ticketmaster Discovery API returns sparse event coverage for Eindhoven (~5 events per 24-hour window). This is a known API limitation, not a code issue. See [TICKETMASTER_SETUP.md](../TICKETMASTER_SETUP.md) for full details on limitations, root causes, and Phase 2 mitigation strategies.
 
-All responses follow a standard structure:
+### Standard Response Structure (Events)
+
+Events endpoints return paginated data with metadata:
 
 ```json
 {
-  "data": {...},
-  "timestamp": "2026-03-17T21:45:32.123Z",
-  "success": true
+  "data": [...],
+  "pagination": {"page": 0, "pageSize": 20, "totalPages": 1, "totalItems": 5}
 }
 ```
 
@@ -26,9 +27,7 @@ For errors:
 
 ```json
 {
-  "error": "error message",
-  "timestamp": "2026-03-17T21:45:32.123Z",
-  "success": false
+  "error": "error message"
 }
 ```
 
@@ -164,25 +163,197 @@ GET /api/zones/1/mood
 
 ---
 
-## 3. GET /api/events
+## 3. GET /api/events/ticketmaster
 
 ### Description
 
-Returns all active and upcoming events in Eindhoven from multiple sources (Eventbrite, Ticketmaster, etc). Events are sorted by start time (most recent first).
+Returns paginated events from Ticketmaster in-memory cache. Events sourced from last `POST /api/events/refresh` call. Sorted by start time (ascending).
 
 ### Request
 
 ```bash
-GET /api/events
+GET /api/events/ticketmaster?page=0&pageSize=20
 ```
 
-### Query Parameters (Future Use)
+### Query Parameters
 
-| Parameter | Type | Description |
-|-----------|------|-------------|
-| `zoneId` | integer | (Optional) Filter events by zone ID |
-| `category` | string | (Optional) Filter by category (e.g., "Sports", "Music", "Conference") |
-| `limit` | integer | (Optional) Maximum number of events to return (default: 100) |
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `page` | integer | 0 | Page number (0-indexed) |
+| `pageSize` | integer | 20 | Results per page (1-50) |
+
+### Response (200 OK)
+
+**Content-Type:** `application/json`
+
+```json
+{
+  "data": [
+    {
+      "id": 1,
+      "title": "Derek Ogilvie - Up Close and Personal",
+      "source": "Ticketmaster",
+      "startTime": "2026-04-03T11:30:00Z",
+      "endTime": null,
+      "category": "Miscellaneous",
+      "url": "https://www.ticketmaster.nl/event/derek-ogilvie-up-close-and-personal-tickets/399246674",
+      "latitude": 51.44466,
+      "longitude": 5.47564
+    },
+    {
+      "id": 2,
+      "title": "Magic Men: World Tour 2026",
+      "source": "Ticketmaster",
+      "startTime": "2026-06-06T18:00:00Z",
+      "endTime": null,
+      "category": "Music",
+      "url": "https://www.ticketmaster.nl/event/magic-men-world-tour-2026-tickets/1243385837",
+      "latitude": 51.41285,
+      "longitude": 5.48132
+    }
+  ],
+  "pagination": {
+    "page": 0,
+    "pageSize": 20,
+    "totalPages": 1,
+    "totalItems": 5
+  }
+}
+```
+
+### EventResponse Field Definitions
+
+| Field | Type | Nullable | Description |
+|-------|------|----------|-------------|
+| `id` | integer | No | Internal cache ID (parsed from Ticketmaster event ID) |
+| `title` | string | No | Event name |
+| `source` | string | No | Always `"Ticketmaster"` (Phase 1) |
+| `startTime` | ISO 8601 | No | Event start time (UTC) |
+| `endTime` | ISO 8601 | Yes | Event end time (UTC), null if not provided by API |
+| `category` | string | No | Classification segment (e.g., "Music", "Sports", "Miscellaneous") |
+| `url` | string | Yes | Ticketmaster event page URL |
+| `latitude` | double | Yes | Venue latitude (may be null if venue data incomplete) |
+| `longitude` | double | Yes | Venue longitude (may be null if venue data incomplete) |
+
+### Response (400 Bad Request)
+
+```json
+{
+  "error": "pageSize must be between 1 and 50"
+}
+```
+
+### Response (200 OK - Empty List)
+
+```json
+{
+  "data": [],
+  "pagination": {
+    "page": 0,
+    "pageSize": 20,
+    "totalPages": 0,
+    "totalItems": 0
+  }
+}
+```
+
+### Notes
+
+- **Typical cache size**: ~5 events for 24-hour Eindhoven search (Ticketmaster API limitation)
+- **Cache source**: Updated by `POST /api/events/refresh` call
+- **All timestamps**: UTC
+- **Sort order**: By startTime ascending (earliest first)
+- **Phase 1 limitation**: No zone assignment yet; Phase 2 will add geospatial mapping
+- **Coordinate handling**: Some venues lack geo-coordinates in Ticketmaster data; frontend must handle nullable lat/lon
+
+---
+
+## 4. POST /api/events/refresh
+
+### Description
+
+Manually trigger a Ticketmaster poll. Fetches events for Eindhoven (next 24 hours) and updates in-memory cache. Intended for cron/background service Phase 2; can be called manually for testing.
+
+### Request
+
+```bash
+POST /api/events/refresh
+```
+
+### Response (200 OK)
+
+**Content-Type:** `application/json`
+
+```json
+{
+  "message": "Ticketmaster poll completed",
+  "cachedCount": 5,
+  "timestamp": "2026-03-27T14:30:00Z"
+}
+```
+
+### Response (500 Internal Server Error)
+
+```json
+{
+  "error": "Failed to poll Ticketmaster",
+  "details": "HTTP 401: Unauthorized - check API key in environment variables"
+}
+```
+
+### Field Definitions
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `message` | string | Status message |
+| `cachedCount` | integer | Total events now in memory cache (typically ~5 for Eindhoven) |
+| `timestamp` | ISO 8601 | When poll completed (UTC) |
+| `error` | string | Error message (only on failure) |
+| `details` | string | Additional error details |
+
+### Ticketmaster Query Parameters (Fixed, Non-Configurable)
+
+These parameters are hardcoded in the service; shown here for transparency:
+
+| Parameter | Value | Description |
+|-----------|-------|-------------|
+| `apikey` | From config | Ticketmaster Discovery API key |
+| `city` | `Eindhoven` | City name (not latitude/longitude) |
+| `size` | `50` | Max events per page |
+| `page` | `0` | First page (auto-fetches all pages if >1) |
+| `startDateTime` | Now (UTC) | Search window start |
+| `endDateTime` | Now + 24h (UTC) | Search window end |
+| `includeTBA` | `yes` | Include "To Be Announced" events |
+| `includeTBD` | `yes` | Include "To Be Determined" events |
+
+### Response Codes
+
+| Code | Meaning | Example |
+|------|---------|---------|
+| 200 | Success | Poll completed, cache updated |
+| 500 | Error | API key missing, network error, JSON parse error |
+
+### Notes
+
+- **Ticketmaster API limitation**: Returns ~5 events for 24-hour Eindhoven search (free tier constraint)
+- **Rate limiting**: Ticketmaster allows 5 requests/second and 5,000/day; service adds 300ms delays between pages
+- **Cache type**: In-memory only (Phase 1); persists across requests but lost on app restart
+- **No pagination on input**: Service fetches all available pages automatically; max 20 pages per poll (Ticketmaster limit)
+- **Error handling**: Network errors and JSON parsing errors return 500; check logs for details
+
+---
+
+## 5. GET /api/weather
+
+### Description
+
+Returns hourly weather forecast for Eindhoven (next 5 days). Phase 1 returns mock data; Phase 2 will return real Open-Meteo API data.
+
+### Request
+
+```bash
+GET /api/weather
+```
 
 ### Response (200 OK)
 
@@ -191,31 +362,16 @@ GET /api/events
 ```json
 [
   {
-    "id": 1,
-    "title": "Tech Conference 2026",
-    "source": "Eventbrite",
-    "startTime": "2026-03-17T23:00:00Z",
-    "endTime": "2026-03-18T05:00:00Z",
-    "category": "Conference",
-    "url": "https://eventbrite.com/e/tech-conference"
+    "date": "2026-03-23T00:00:00Z",
+    "temperatureC": 12,
+    "temperatureF": 54,
+    "summary": "Mild"
   },
   {
-    "id": 2,
-    "title": "PSV vs AFC Ajax",
-    "source": "football-data.org",
-    "startTime": "2026-03-18T01:00:00Z",
-    "endTime": "2026-03-18T03:00:00Z",
-    "category": "Sports",
-    "url": "https://psv.nl"
-  },
-  {
-    "id": 3,
-    "title": "Live Jazz Night",
-    "source": "Ticketmaster",
-    "startTime": "2026-03-18T03:00:00Z",
-    "endTime": "2026-03-18T07:00:00Z",
-    "category": "Music",
-    "url": "https://ticketmaster.com/jazz"
+    "date": "2026-03-24T00:00:00Z",
+    "temperatureC": 8,
+    "temperatureF": 46,
+    "summary": "Chilly"
   }
 ]
 ```
@@ -224,38 +380,17 @@ GET /api/events
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `id` | integer | Unique event identifier in cache |
-| `title` | string | Event name |
-| `source` | string | Data source: `"Eventbrite"`, `"Ticketmaster"`, `"football-data.org"`, or other |
-| `startTime` | ISO 8601 timestamp | Event start (UTC) |
-| `endTime` | ISO 8601 timestamp (nullable) | Event end (UTC), may be null for open-ended events |
-| `category` | string | Event type (e.g., "Conference", "Sports", "Music", "Market") |
-| `url` | string (nullable) | URL to event details or booking page |
-
-### Response (200 OK - Empty List)
-
-```json
-[]
-```
-
-Returns empty array if no events match the filter criteria.
-
-### Source Reference
-
-| Source | Data Provider | Update Frequency |
-|--------|---------------|-----------------|
-| `Eventbrite` | Eventbrite API | Every 30 minutes |
-| `Ticketmaster` | Ticketmaster Discovery API | Every 30 minutes |
-| `football-data.org` | Football Data API | Daily (for PSV matches) |
-| `Local Events` | Manual entry / community | As needed |
+| `date` | ISO 8601 timestamp | Forecast date/time |
+| `temperatureC` | integer | Temperature in Celsius |
+| `temperatureF` | integer | Temperature in Fahrenheit |
+| `summary` | string | Weather description (e.g., "Mild", "Bracing", "Warm") |
 
 ### Notes
 
-- Phase 1 returns mock data
-- Phase 2 will include zone assignment for each event
-- All timestamps are in UTC
-- Events are pre-filtered to exclude past events (startTime >= now)
-- Results sorted by startTime descending (closest events first)
+- Phase 1: Returns mock random data for 5 days ahead
+- Phase 2: Will fetch from Open-Meteo API (hourly granularity)
+- Used internally by mood prediction algorithm; not primary UI signal
+- **TODO**: Update controller route to `[Route("api/[controller]")]` for consistency with other endpoints
 
 ---
 
@@ -351,12 +486,14 @@ Show as percentage: `(confidence * 100).toFixed(0) + "%"`
 
 | Version | Date | Changes |
 |---------|------|---------|
-| 1.0 | 2026-03-17 | Initial Phase 1 contracts, mock data |
-| 1.1 (planned) | 2026-04-01 | Add pagination, filtering by zone/category |
-| 2.0 (planned) | 2026-05-01 | Live data integration, confidence intervals |
+| 2.0 | 2026-03-27 | Updated to Ticketmaster Discovery API v2 (live); removed mock data; added coverage limitations |
+| 1.1 | 2026-03-17 | Added pagination, filtering by zone/category (planned) |
+| 1.0 | 2026-03-17 | Initial Phase 1 contracts with mock data |
 
 ---
 
-**Last Updated:** 2026-03-19
-**Owner:** Backend Team (Sia & Ivan)
-**Status:** Phase 1 Development
+**Last Updated:** 2026-03-27  
+**Owner:** Backend Team  
+**Status:** Phase 1 Development (Live with Ticketmaster Discovery API v2)  
+
+**Important**: All Ticketmaster endpoints return live data from free tier API. Event coverage is sparse (~5 events per 24 hours for Eindhoven). See [TICKETMASTER_SETUP.md](../TICKETMASTER_SETUP.md) for detailed limitations, causes, and Phase 2+ mitigation strategies.
