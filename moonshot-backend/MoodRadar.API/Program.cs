@@ -21,6 +21,16 @@ builder.Services.AddHttpClient<TicketmasterService>()
     });
 builder.Services.AddSingleton<ITicketmasterService>(sp => sp.GetRequiredService<TicketmasterService>());
 
+// Register Weather service as Singleton with HttpClient
+// Singleton ensures the in-memory weather cache persists across requests
+// Open-Meteo API requires no authentication key
+builder.Services.AddHttpClient<WeatherService>()
+    .ConfigureHttpClient(client =>
+    {
+        client.Timeout = TimeSpan.FromSeconds(30);
+    });
+builder.Services.AddSingleton<IWeatherService>(sp => sp.GetRequiredService<WeatherService>());
+
 // Register mood update background service (runs every 15 minutes)
 builder.Services.AddHostedService<MoodUpdateService>();
 

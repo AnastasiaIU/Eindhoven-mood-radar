@@ -134,12 +134,12 @@ MoodRadar.API/
 ├── Controllers/
 │   ├── ZonesController.cs          # GET /api/zones, GET /api/zones/:id/mood
 │   ├── EventsController.cs         # GET /api/events
-│   └── WeatherForecastController.cs # TODO: Replace with Open-Meteo connector
+│   └── WeatherController.cs # TODO: Replace with Open-Meteo connector
 ├── Models/
 │   ├── Zone.cs                 # Zone entity
 │   ├── ZoneSnapshot.cs         # Mood prediction snapshot
 │   ├── Event.cs                # Event entity
-│   └── WeatherForecast.cs      # Weather forecast (Phase 1 mock, Phase 2: Open-Meteo)
+│   └── Weather.cs              # Weather forecast (Phase 1 mock, Phase 2: Open-Meteo)
 ├── Services/
 │   └── MockDataService.cs      # Phase 1: Returns mock data
 ├── Program.cs                  # Application setup
