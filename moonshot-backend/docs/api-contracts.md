@@ -347,7 +347,12 @@ These parameters are hardcoded in the service; shown here for transparency:
 
 ### Description
 
-Returns hourly weather forecast for Eindhoven (next 5 days). Phase 1 returns mock data; Phase 2 will return real Open-Meteo API data.
+Returns all cached hourly weather forecasts for Eindhoven. Data sourced from Open-Meteo API (free, no key required). Cache updated every 15 minutes by background service.
+
+**Data source:** [Open-Meteo](https://open-meteo.com) Free Weather API  
+**Update frequency:** Every 15 minutes (background service)  
+**Coverage:** Eindhoven (51.4416°N, 5.4699°E)  
+**Forecast window:** Next day, 1-hour resolution
 
 ### Request
 
@@ -362,35 +367,202 @@ GET /api/weather
 ```json
 [
   {
-    "date": "2026-03-23T00:00:00Z",
-    "temperatureC": 12,
-    "temperatureF": 54,
-    "summary": "Mild"
+    "id": 1,
+    "snapshotHour": "2026-03-28T14:00:00Z",
+    "temperatureC": 12.3,
+    "precipitationProbability": 25,
+    "cloudCover": 65,
+    "cachedAt": "2026-03-28T13:58:00Z"
   },
   {
-    "date": "2026-03-24T00:00:00Z",
-    "temperatureC": 8,
-    "temperatureF": 46,
-    "summary": "Chilly"
+    "id": 2,
+    "snapshotHour": "2026-03-28T15:00:00Z",
+    "temperatureC": 13.1,
+    "precipitationProbability": 20,
+    "cloudCover": 70,
+    "cachedAt": "2026-03-28T13:58:00Z"
   }
 ]
 ```
 
 ### Field Definitions
 
-| Field | Type | Description |
-|-------|------|-------------|
-| `date` | ISO 8601 timestamp | Forecast date/time |
-| `temperatureC` | integer | Temperature in Celsius |
-| `temperatureF` | integer | Temperature in Fahrenheit |
-| `summary` | string | Weather description (e.g., "Mild", "Bracing", "Warm") |
+| Field | Type | Nullable | Description |
+|-------|------|----------|-------------|
+| `id` | integer | No | Internal cache row ID |
+| `snapshotHour` | ISO 8601 | No | Hour timestamp (UTC, rounded to nearest hour) |
+| `temperatureC` | double | No | Temperature in Celsius (2m above ground) |
+| `precipitationProbability` | integer | No | Probability of precipitation (0–100 %) |
+| `cloudCover` | integer | No | Cloud cover percentage (0–100 %) |
+| `cachedAt` | ISO 8601 | No | When this record was cached (UTC) |
 
 ### Notes
 
-- Phase 1: Returns mock random data for 5 days ahead
-- Phase 2: Will fetch from Open-Meteo API (hourly granularity)
-- Used internally by mood prediction algorithm; not primary UI signal
-- **TODO**: Update controller route to `[Route("api/[controller]")]` for consistency with other endpoints
+- All timestamps are in UTC
+- Returned in ascending order by `snapshotHour`
+- Cache is in-memory; persists across requests, lost on app restart
+- Typical cache size: ~24 records (1 day × 24 hours)
+
+### Response (500 Internal Server Error)
+
+```json
+{
+  "error": "Error retrieving weather data"
+}
+```
+
+---
+
+## 6. GET /api/weather/hour
+
+### Description
+
+Retrieve weather for a specific hour from cache. Matches to nearest hour in cache (ignores minutes/seconds).
+
+### Request
+
+```bash
+GET /api/weather/hour?timestamp=2026-03-28T14:30:00Z
+```
+
+### Query Parameters
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `timestamp` | ISO 8601 | Yes | Hour to retrieve. Will match to nearest hour in cache (e.g., `14:30:00Z` → `14:00:00Z`) |
+
+### Response (200 OK)
+
+**Content-Type:** `application/json`
+
+```json
+{
+  "id": 1,
+  "snapshotHour": "2026-03-28T14:00:00Z",
+  "temperatureC": 12.3,
+  "precipitationProbability": 25,
+  "cloudCover": 65,
+  "cachedAt": "2026-03-28T13:58:00Z"
+}
+```
+
+### Response (404 Not Found)
+
+```json
+{
+  "error": "No weather data for requested hour"
+}
+```
+
+Hour is not in cache (cache older than 1 day, or hour is in the past).
+
+### Response (500 Internal Server Error)
+
+```json
+{
+  "error": "Error retrieving weather data"
+}
+```
+
+---
+
+## 7. POST /api/weather/fetch
+
+### Description
+
+Manually trigger a weather fetch from Open-Meteo API. Normally called by background service every 15 minutes. Useful for testing or forcing manual updates.
+
+### Request
+
+```bash
+POST /api/weather/fetch
+```
+
+### Response (200 OK)
+
+**Content-Type:** `application/json`
+
+```json
+[
+  {
+    "id": 1,
+    "snapshotHour": "2026-03-28T14:00:00Z",
+    "temperatureC": 12.3,
+    "precipitationProbability": 25,
+    "cloudCover": 65,
+    "cachedAt": "2026-03-28T13:58:15Z"
+  },
+  {
+    "id": 2,
+    "snapshotHour": "2026-03-28T15:00:00Z",
+    "temperatureC": 13.1,
+    "precipitationProbability": 20,
+    "cloudCover": 70,
+    "cachedAt": "2026-03-28T13:58:15Z"
+  }
+]
+```
+
+### Response (500 Internal Server Error)
+
+```json
+{
+  "error": "Error fetching weather data from external API"
+}
+```
+
+Network error, OpenMeteo API unreachable, or JSON parsing error.
+
+### Notes
+
+- Returns newly fetched records (1-day forecast)
+- Replaces entire cache on each call
+- No rate limiting on client side; Open-Meteo API allows unlimited free calls
+- Response is list of all cached records after fetch is complete
+
+---
+
+## 8. DELETE /api/weather/cache
+
+### Description
+
+Remove old weather records from cache (older than specified days). Reduces memory footprint for long-running apps.
+
+### Request
+
+```bash
+DELETE /api/weather/cache?olderThanDays=1
+```
+
+### Query Parameters
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `olderThanDays` | integer | 1 | Age threshold in days |
+
+### Response (200 OK)
+
+**Content-Type:** `application/json`
+
+```json
+{
+  "message": "Cache cleared (older than 1 day). 42 records remain."
+}
+```
+
+### Response (500 Internal Server Error)
+
+```json
+{
+  "error": "Error clearing cache"
+}
+```
+
+### Notes
+
+- Operates on in-memory cache only
+- Returns count of remaining records after deletion
+- Safe to call multiple times (idempotent)
 
 ---
 
@@ -486,14 +658,15 @@ Show as percentage: `(confidence * 100).toFixed(0) + "%"`
 
 | Version | Date | Changes |
 |---------|------|---------|
+| 2.1 | 2026-03-28 | Added weather endpoints (GET /api/weather, GET /api/weather/hour, POST /api/weather/fetch, DELETE /api/weather/cache) sourced from Open-Meteo API; background service now polls weather every 15 min |
 | 2.0 | 2026-03-27 | Updated to Ticketmaster Discovery API v2 (live); removed mock data; added coverage limitations |
 | 1.1 | 2026-03-17 | Added pagination, filtering by zone/category (planned) |
 | 1.0 | 2026-03-17 | Initial Phase 1 contracts with mock data |
 
 ---
 
-**Last Updated:** 2026-03-27  
+**Last Updated:** 2026-03-28  
 **Owner:** Backend Team  
-**Status:** Phase 1 Development (Live with Ticketmaster Discovery API v2)  
+**Status:** Phase 1 Development (Live with Ticketmaster Discovery API v2 + Open-Meteo Weather)  
 
 **Important**: All Ticketmaster endpoints return live data from free tier API. Event coverage is sparse (~5 events per 24 hours for Eindhoven). See [TICKETMASTER_SETUP.md](../TICKETMASTER_SETUP.md) for detailed limitations, causes, and Phase 2+ mitigation strategies.

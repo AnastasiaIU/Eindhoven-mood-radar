@@ -24,12 +24,12 @@ moonshot-backend/
 │   ├── Controllers/              # API endpoints
 │   │   ├── ZonesController.cs    # GET /api/zones, /api/zones/:id/mood
 │   │   ├── EventsController.cs   # GET /api/events
-│   │   └── WeatherForecastController.cs
+│   │   └── WeatherController.cs
 │   ├── Models/                   # Data entities
 │   │   ├── Zone.cs
 │   │   ├── ZoneSnapshot.cs
 │   │   ├── Event.cs
-│   │   └── WeatherForecast.cs    # Weather forecast (Phase 1 mock, Phase
+│   │   └── Weather.cs    # Weather forecast (Phase 1 mock, Phase
 │   ├── Services/                 # Business logic
 │   │   └── MockDataService.cs    # Phase 1: Mock data provider
 │   ├── Program.cs                # Application setup, DI, middleware
