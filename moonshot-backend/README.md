@@ -45,6 +45,25 @@ moonshot-backend/
 - **[API Contracts](docs/api-contracts.md)** - Full endpoint specification for frontend integration
 - **[Backend README](MoodRadar.API/README.md)** - Setup, configuration, and development guide
 
+## Deployment
+
+See [DEPLOYMENT.md](../DEPLOYMENT.md) for:
+
+- Local development setup
+- Render.com deployment guide
+- GitHub Actions CI/CD pipeline
+- Environment configuration
+
+Quick start for production:
+
+```bash
+# Build Docker image
+docker build -f moonshot-backend/Dockerfile -t mood-radar-api .
+
+# Run locally
+docker run -p 5000:5000 mood-radar-api
+```
+
 ## API Endpoints
 
 | Method | URL | Description |
