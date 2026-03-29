@@ -44,6 +44,7 @@ moonshot-backend/
 
 - **[API Contracts](docs/api-contracts.md)** - Full endpoint specification for frontend integration
 - **[Backend README](MoodRadar.API/README.md)** - Setup, configuration, and development guide
+- **[POSTGRESQL SETUP](POSTGRESQL_SETUP.md)** - Database setup
 
 ## Deployment
 

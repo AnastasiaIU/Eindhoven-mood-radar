@@ -11,14 +11,14 @@ This is the backend API server that provides:
 - Event data from multiple sources (Eventbrite, Ticketmaster, PSV, etc.)
 
 **Status:** Phase 1 Development (Mock Data)  
-**Framework:** C# 6.0+ with ASP.NET Core  
-**Database:** PostgreSQL (planned Phase 2)
+**Framework:** C# with ASP.NET Core 8.0 (LTS)  
+**Database:** PostgreSQL
 
 ## Getting Started
 
 ### Prerequisites
 
-- .NET 6.0 SDK or later ([download](https://dotnet.microsoft.com/download))
+- .NET 8.0 SDK or later ([download](https://dotnet.microsoft.com/download))
 - Git
 
 ### Installation

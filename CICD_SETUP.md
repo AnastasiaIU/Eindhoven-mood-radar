@@ -69,7 +69,7 @@ Eindhoven-mood-radar/
 ├── DEPLOYMENT.md                     # Full deployment guide
 ├── docs/
 │   ├── api-contracts.md
-│   ├── api-eventbrite-signal-audit.md
+│   ├── ticketmaster_api_audit.md
 │   └── project-driven-creation-PMC.md
 └── README.md (this file)
 ```
@@ -91,7 +91,7 @@ Eindhoven-mood-radar/
 
 **Backend** (`dotnet restore` → `dotnet build` → `dotnet test`):
 
-- .NET 6.0
+- .NET 8.0 LTS
 - Solution build
 - Unit tests (if configured)
 

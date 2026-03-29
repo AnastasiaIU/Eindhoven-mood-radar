@@ -1,6 +1,6 @@
 namespace MoodRadar.API.Services;
 
-using MoodRadar.API.Models;
+using MoodRadar.API.Models.Integrations;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using System.Net.Http.Headers;

@@ -80,7 +80,7 @@ Per Ticketmaster API docs, these could supplement the search but aren't needed:
 
 ### Full Response Example
 
-Actual response from Ticketmaster (March 27, 2026):
+Actual response from Ticketmaster (March 2026):
 
 ```json
 {
@@ -149,7 +149,7 @@ Actual response from Ticketmaster (March 27, 2026):
   },
   "page": {
     "size": 50,
-    "totalElements": 5,
+    "totalElements": 2,
     "totalPages": 1,
     "number": 0
   }
@@ -199,20 +199,6 @@ Ticketmaster uses segment/genre/subgenre hierarchy. Most relevant: **segment.nam
 ]
 ```
 
-### Observed Categories for Eindhoven
-
-From March 27 API results:
-
-| Category | Count | Mood Signal Relevance |
-|----------|-------|----------------------|
-| Miscellaneous | 2 | Low (ambiguous) |
-| Music | 2 | High (energetic potential) |
-| Sports | 0 (but PSV integrated separately) | High |
-| Arts | 0 | Medium |
-| Family | 0 | Medium |
-
-**Phase 1 Action**: All current events are categorized; no unmapped categories observed.
-
 ---
 
 ## 5. CRITICAL COVERAGE LIMITATIONS
@@ -221,36 +207,37 @@ From March 27 API results:
 
 **Date Range**: March 27 - April 5, 2026 (10 days, but search window is 24h at a time)  
 **Search Method**: `city=Eindhoven` (not geoPoint)  
-**Result**: **~5 events for 24-hour window**
+**Result**: **~2 events for 10 days window**
 
 **Example discoverable events**:
 - Derek Ogilvie - Up Close and Personal (2 times on April 3)
-- The Hindley Street Country Club (April 29)
-- Magic Men: World Tour 2026 (June 6)
-- Zach Bryan - With Heaven On Tour (June 9)
 
 ### What Ticketmaster.nl Website Shows
 
-Browsing ticketmaster.nl directly with city=Eindhoven filter shows ~10 events, but Discovery API returns only 5. **Data sources are different.**
+Browsing ticketmaster.nl directly with city=Eindhoven filter shows ~10 events, but Discovery API returns only 2. **Data sources are different.**
 
 ### Root Causes
 
 **1. Limited Syndication Partners**
+
 - API sources only from: Ticketmaster, TicketWeb, Universe, FrontGate, Ticketmaster Sport, MoshTix
 - Many local Dutch venues and independent promoters NOT included
 - Example: Small theater groups, university events, community festivals
 
 **2. Tier-2 City Bias**
+
 - Ticketmaster's data concentration: USA (primary), then UK, then Western Europe
 - Netherlands is "supported" but sparse relative to major markets
 - Eindhoven is a tier-2 city (population ~230K); not a priority for syndicated event data
 
 **3. Free Tier Limitations**
+
 - Official FAQ: "If your use case demands higher limits, consider Discovery Feed" (paid tier)
 - Free tier may receive delayed or limited data vs. paid tiers
 - No official documentation of free-tier event filtering, but behavior suggests it
 
 **4. Event Visibility & Status**
+
 - API respects `publicVisibilityStartDateTime`; presale/draft events filtered
 - TBA/TBD events included via `includeTBA=yes` but still limited
 
@@ -258,9 +245,9 @@ Browsing ticketmaster.nl directly with city=Eindhoven filter shows ~10 events, b
 
 | Source | Eindhoven Events | Time Window | Notes |
 |--------|------------------|-------------|-------|
-| Ticketmaster Discovery API (free) | ~5 | 24h | City-based search |
-| ticketmaster.nl (website) | ~10 | 24h | Same search criteria |
-| Difference | -50% | Same | API returns subset |
+| Ticketmaster Discovery API (free) | ~2 | 10d | City-based search |
+| ticketmaster.nl (website) | ~10 | 10d | Same search criteria |
+| Difference | -80% | Same | API returns subset |
 
 ---
 
@@ -268,62 +255,36 @@ Browsing ticketmaster.nl directly with city=Eindhoven filter shows ~10 events, b
 
 ### Short-term (Phase 1)
 
-- ✅ Accept 5 events/24h as MVP validation data
+- ✅ Accept 2 events/10d as MVP validation data
 - ✅ Document bias in Transparency Panel ("Event data sourced from Ticketmaster Discovery API")
 - ✅ Acknowledge data quality gap to stakeholders
 
 ### Medium-term (Phase 2)
 
-1. **Add Secondary Data Source** (Recommended)
+1. **Add Secondary Data Source**
    - Integrate Eventim.nl (Dutch event platform)
    - Or integrate ThreeTickets / De Ticketshop
    - Fetch and merge with Ticketmaster results
 
-2. **Upgrade to Ticketmaster Discovery Feed** (Paid Alternative)
-   - Cost: ~$500-1000/month (estimate)
-   - Benefits: Comprehensive indexing, no call limits, hourly refreshes
-   - Still limited but better than free tier
-
-3. **Direct Venue Partnerships**
+2. **Direct Venue Partnerships**
    - PSV Stadion: Already via football-data.org
    - Philips Stadion: API available
    - Local music venues: Direct API integration or web scraping
 
-### Long-term (Phase 2+)
-
-- **Hybrid Data Pipeline**: Ticketmaster + local sources + PSV + weather = comprehensive signal
-- **Web Scraping Fallback**: If APIs insufficient, scrape local Dutch event sites
-- **Community Data**: Allow users to submit/verify events manually (Phase 3+)
-
 ---
 
-## 7. Phase 1 Deliverables
-
-- [x] Ticketmaster service authenticates with free API key
-- [x] City-based search working (city=Eindhoven)
-- [x] Pagination implemented (auto-fetches all pages)
-- [x] Response parsing (JSON → Models)
-- [x] Coordinate conversion (string → double)
-- [x] In-memory caching (singleton pattern)
-- [x] Rate-limit logging (X-Rate-Limit headers)
-- [x] Error handling (401, 429, JSON parse errors)
-- [x] Coverage audit completed: ~5 events/24h
-- ⚠️ **Data quality gap documented**: API limitation, not bug
-
----
-
-## 8. Known Issues & Workarounds
+## 7. Known Issues & Workarounds
 
 ### Issue 1: Very Few Events (Expected)
 
-- **Symptom**: Only 5 events returned for 24-hour Eindhoven search
+- **Symptom**: Only 2 events returned for 10 days Eindhoven search
 - **Cause**: Ticketmaster free tier limited syndication for tier-2 Dutch cities
 - **Workaround**: Add local Dutch event APIs in Phase 2
 
 ### Issue 2: Sparse Coverage in Outer Districts
 
 - **Symptom**: Woensel-Noord, Stratum zones show no events
-- **Cause**: Eventbrite/Ticketmaster centralize data in city center (Centrum, Strijp-S)
+- **Cause**: Ticketmaster centralizes data in city center (Centrum, Strijp-S)
 - **Workaround**: Zone-mapping must budget for "Calm" mood in low-event zones
 
 ### Issue 3: Null Coordinates on Some Venues
@@ -331,9 +292,3 @@ Browsing ticketmaster.nl directly with city=Eindhoven filter shows ~10 events, b
 - **Symptom**: Some events have latitude/longitude == null
 - **Cause**: Ticketmaster venue data incomplete
 - **Workaround**: Frontend handles nullable coordinates, uses event URL for fallback
-
----
-
-**Last Updated:** 2026-03-27  
-**Owner:** Backend Team & AI Specialist  
-**Status:** Phase 1 (Service live; data audit complete)
