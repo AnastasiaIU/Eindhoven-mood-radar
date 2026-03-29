@@ -1,16 +1,15 @@
+using DotNetEnv;
 using MoodRadar.API.Services;
 using MoodRadar.API.Data;
 using DotNetEnv;
 using Microsoft.EntityFrameworkCore;
 
-// Load .env file BEFORE building the app
 Env.Load();
 
 var builder = WebApplication.CreateBuilder(args);
 
-// Add services to the container.
+// Add services
 builder.Services.AddControllers();
-
 // Register Entity Framework Core with PostgreSQL
 var connectionString = builder.Configuration.GetConnectionString("PostgreSQL") 
     ?? throw new InvalidOperationException("PostgreSQL connection string not found in configuration");
@@ -50,6 +49,39 @@ builder.Services.AddScoped<FootballService>();
 builder.Services.AddHostedService<MoodUpdateService>();
 
 // Define allowed origins based on environment
+builder.Services.AddEndpointsApiExplorer();
+builder.Services.AddSwaggerGen();
+
+// Services
+builder.Services.AddScoped<FootballService>();
+
+// HttpClients
+builder.Services.AddHttpClient("football", client =>
+{
+    client.BaseAddress = new Uri("https://api.football-data.org/v4/");
+    client.DefaultRequestHeaders.Add("X-Auth-Token", builder.Configuration["FootballApi:ApiKey"]);
+});
+
+builder.Services.AddHttpClient<TicketmasterService>(client =>
+{
+    client.Timeout = TimeSpan.FromSeconds(30);
+});
+
+builder.Services.AddHttpClient<WeatherService>(client =>
+{
+    client.Timeout = TimeSpan.FromSeconds(30);
+});
+
+// Service interfaces
+builder.Services.AddSingleton<IWeatherService>(sp =>
+    sp.GetRequiredService<WeatherService>());
+
+builder.Services.AddSingleton<ITicketmasterService>(sp =>
+    sp.GetRequiredService<TicketmasterService>());
+
+builder.Services.AddHostedService<MoodUpdateService>();
+
+// CORS
 var allowedOrigins = builder.Environment.IsProduction()
     ? new[] { "" }
     : new[] { "http://localhost:3000" };
@@ -60,10 +92,9 @@ builder.Services.AddCors(options =>
 {
     options.AddPolicy("AllowFrontend", policy =>
     {
-        policy
-            .WithOrigins(allowedOrigins)
-            .AllowAnyMethod()
-            .AllowAnyHeader();
+        policy.WithOrigins(allowedOrigins)
+              .AllowAnyMethod()
+              .AllowAnyHeader();
     });
 });
 
@@ -106,6 +137,7 @@ if (app.Environment.IsDevelopment())
 {
 }
 // Enable Swagger middleware
+// Middleware
 app.UseSwagger();
 app.UseSwaggerUI();
 
