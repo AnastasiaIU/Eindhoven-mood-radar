@@ -8,9 +8,9 @@
 
 ## Overview
 
-This document defines the JSON contracts for REST API endpoints. **The backend now live-polls Ticketmaster Discovery API** and serves events from an in-memory cache. Phase 2 will add database persistence while maintaining these JSON contracts.
+This document defines the JSON contracts for REST API endpoints. **The backend polls Ticketmaster Discovery API and persists events in PostgreSQL.** Events are updated every 15 minutes via background service.
 
-**⚠️ CRITICAL DATA LIMITATION**: Ticketmaster Discovery API returns sparse event coverage for Eindhoven (~5 events per 24-hour window). This is a known API limitation, not a code issue. See [TICKETMASTER_SETUP.md](../TICKETMASTER_SETUP.md) for full details on limitations, root causes, and Phase 2 mitigation strategies.
+**⚠️ DATA COVERAGE NOTE**: Ticketmaster Discovery API returns sparse event coverage for Eindhoven (~2 events per 10 days window). This is a known API limitation for tier-2 Dutch cities, not a code issue. See [ticketmaster_api_audit.md](../docs/ticketmaster_api_audit.md) for full details on limitations, root causes, and Phase 2 mitigation strategies.
 
 ### Standard Response Structure (Events)
 
@@ -665,8 +665,10 @@ Show as percentage: `(confidence * 100).toFixed(0) + "%"`
 
 ---
 
-**Last Updated:** 2026-03-28  
+**Last Updated:** 2026-03-29  
 **Owner:** Backend Team  
-**Status:** Phase 1 Development (Live with Ticketmaster Discovery API v2 + Open-Meteo Weather)  
+**Status:** Phase 1 Development (Live with Ticketmaster Discovery API v2 + PostgreSQL Persistence)  
 
-**Important**: All Ticketmaster endpoints return live data from free tier API. Event coverage is sparse (~5 events per 24 hours for Eindhoven). See [TICKETMASTER_SETUP.md](../TICKETMASTER_SETUP.md) for detailed limitations, causes, and Phase 2+ mitigation strategies.
+**Setup Guide:** See [POSTGRESQL_SETUP.md](../POSTGRESQL_SETUP.md) for local development environment setup.
+
+**Important**: All Ticketmaster endpoints return live data from free tier API. Event coverage is sparse (~2 events per 10 days for Eindhoven). See [ticketmaster_api_audit.md](../docs/ticketmaster_api_audit.md) for detailed limitations, causes, and Phase 2+ mitigation strategies.

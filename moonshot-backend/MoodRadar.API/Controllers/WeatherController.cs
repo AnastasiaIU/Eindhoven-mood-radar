@@ -1,6 +1,6 @@
 using Microsoft.AspNetCore.Mvc;
 using MoodRadar.API.Services;
-using MoodRadar.API.Models;
+using MoodRadar.API.Models.Domain;
 
 namespace MoodRadar.API.Controllers;
 
