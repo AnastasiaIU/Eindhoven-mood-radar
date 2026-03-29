@@ -1,6 +1,7 @@
 namespace MoodRadar.API.Services;
 
-using MoodRadar.API.Models;
+using MoodRadar.API.Models.Domain;
+using MoodRadar.API.Data;
 using System.Text.Json;
 
 /// <summary>
@@ -42,6 +43,7 @@ public interface IWeatherService
 public class WeatherService : IWeatherService
 {
     private readonly HttpClient _httpClient;
+    private readonly IServiceProvider _serviceProvider;
     private readonly ILogger<WeatherService> _logger;
 
     // In-memory cache
@@ -54,9 +56,10 @@ public class WeatherService : IWeatherService
     // API constants
     private const string BaseUrl = "https://api.open-meteo.com/v1/forecast";
 
-    public WeatherService(HttpClient httpClient, ILogger<WeatherService> logger)
+    public WeatherService(HttpClient httpClient, IServiceProvider serviceProvider, ILogger<WeatherService> logger)
     {
         _httpClient = httpClient;
+        _serviceProvider = serviceProvider;
         _logger = logger;
     }
 
@@ -164,6 +167,33 @@ public class WeatherService : IWeatherService
 
                     _logger.LogInformation("Successfully parsed {Count} hourly weather records from Open-Meteo", 
                         weatherList.Count);
+
+                    // Save to database
+                    try
+                    {
+                        using (var scope = _serviceProvider.CreateScope())
+                        {
+                            var dbContext = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
+
+                            // Clear old weather records first (keep only last day)
+                            var cutoffTime = DateTime.UtcNow.AddDays(-1);
+                            var oldRecords = dbContext.Weathers.Where(w => w.SnapshotHour < cutoffTime).ToList();
+                            if (oldRecords.Any())
+                            {
+                                dbContext.Weathers.RemoveRange(oldRecords);
+                                _logger.LogDebug("Removed {Count} old weather records from database", oldRecords.Count);
+                            }
+
+                            // Add new records
+                            dbContext.Weathers.AddRange(weatherList);
+                            await dbContext.SaveChangesAsync();
+                            _logger.LogInformation("Saved {Count} weather records to database", weatherList.Count);
+                        }
+                    }
+                    catch (Exception dbEx)
+                    {
+                        _logger.LogError(dbEx, "Error saving weather records to database. Using in-memory cache only.");
+                    }
 
                     // Update in-memory cache
                     _cachedWeather = weatherList;

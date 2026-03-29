@@ -1,8 +1,9 @@
-namespace MoodRadar.API.Models;
+namespace MoodRadar.API.Models.Domain;
 
 /// <summary>
 /// Hourly weather data snapshot cached from Open-Meteo API.
 /// Keyed by hour (SnapshotHour is rounded to the nearest hour).
+/// Used as an input feature for mood prediction.
 /// </summary>
 public class Weather
 {

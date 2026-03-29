@@ -1,10 +1,10 @@
-namespace MoodRadar.API.Models;
+namespace MoodRadar.API.Models.Integrations;
 
 using System.Text.Json.Serialization;
 
 /// <summary>
-/// Response models for Ticketmaster Discovery API v2.
-/// Documents the actual structure returned by Ticketmaster.
+/// Models for deserializing Ticketmaster Discovery API v2 responses.
+/// These DTOs map to the JSON structure returned by Ticketmaster endpoints.
 /// API Reference: https://developer.ticketmaster.com/products-and-docs/apis/discovery-api/v2/
 /// </summary>
 /// 
@@ -257,6 +257,36 @@ public class TicketmasterAttraction
 }
 
 /// <summary>
+/// Rate limit information from Ticketmaster API response headers.
+/// Used to track API quotas and rate limit reset time.
+/// </summary>
+public class RateLimitInfo
+{
+    /// <summary>
+    /// Total rate limit (requests per time window).
+    /// From "X-Rate-Limit" header.
+    /// </summary>
+    public int Limit { get; set; }
+
+    /// <summary>
+    /// Remaining requests in current time window.
+    /// From "X-Rate-Limit-Remaining" header.
+    /// </summary>
+    public int Remaining { get; set; }
+
+    /// <summary>
+    /// Seconds until rate limit resets.
+    /// Calculated from "X-Rate-Limit-Reset" Unix timestamp.
+    /// </summary>
+    public int ResetSeconds { get; set; }
+
+    public override string ToString()
+    {
+        return $"Limit: {Limit}, Remaining: {Remaining}, ResetSeconds: {ResetSeconds}";
+    }
+}
+
+/// <summary>
 /// Price range for an event.
 /// </summary>
 public class TicketmasterPriceRange
@@ -298,28 +328,11 @@ public class TicketmasterPageInfo
     public int Size { get; set; }
 
     [JsonPropertyName("totalElements")]
-    public int TotalElements { get; set; }
+    public long TotalElements { get; set; }
 
     [JsonPropertyName("totalPages")]
     public int TotalPages { get; set; }
 
     [JsonPropertyName("number")]
-    public int Number { get; set; } // 0-indexed page number
-}
-
-/// <summary>
-/// HTTP response headers from Ticketmaster containing rate limit information.
-/// Shared model used across API services.
-/// </summary>
-public class RateLimitInfo
-{
-    public int Limit { get; set; }
-    public int Remaining { get; set; }
-    public int ResetSeconds { get; set; }
-    public DateTime LoggedAt { get; set; } = DateTime.UtcNow;
-
-    public override string ToString()
-    {
-        return $"RateLimit: {Remaining}/{Limit} remaining, resets in {ResetSeconds}s";
-    }
+    public int Number { get; set; }
 }
