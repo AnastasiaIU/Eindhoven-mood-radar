@@ -3,8 +3,11 @@ using System.Net.Http;
 using System.Threading.Tasks;
 using System.Collections.Generic;
 using System.Globalization;
+<<<<<<< HEAD
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
+=======
+>>>>>>> e28531f (comments fixed)
 using Newtonsoft.Json.Linq;
 using MoodRadar.API.Models;
 
@@ -16,6 +19,7 @@ namespace MoodRadar.API.Services
         private readonly ILogger<FootballService> _logger;
         private readonly string _apiKey;
 
+<<<<<<< HEAD
         public FootballService(
             IHttpClientFactory factory,
             ILogger<FootballService> logger,
@@ -30,6 +34,14 @@ namespace MoodRadar.API.Services
             {
                 _client.DefaultRequestHeaders.Add("X-Auth-Token", _apiKey);
             }
+=======
+        public FootballService(IHttpClientFactory factory, ILogger<FootballService> logger, IConfiguration config)
+        {
+            _client = factory.CreateClient("football");
+            _logger = logger;
+            _apiKey = config["FootballApi:ApiKey"];
+            _client.DefaultRequestHeaders.Add("X-Auth-Token", _apiKey);
+>>>>>>> e28531f (comments fixed)
         }
 
         public async Task<List<PsvMatch>> GetPsvMatchesAsync()
@@ -58,9 +70,15 @@ namespace MoodRadar.API.Services
 
                     var formats = new[]
                     {
+<<<<<<< HEAD
                         "yyyy-MM-ddTHH:mm:ssZ",
                         "MM/dd/yyyy HH:mm:ss",
                         "dd/MM/yyyy HH:mm:ss"
+=======
+                        "yyyy-MM-ddTHH:mm:ssZ",  // normal API format
+                        "MM/dd/yyyy HH:mm:ss",   // US format (your error)
+                        "dd/MM/yyyy HH:mm:ss"    // EU fallback
+>>>>>>> e28531f (comments fixed)
                     };
 
                     if (!DateTime.TryParseExact(
@@ -71,7 +89,11 @@ namespace MoodRadar.API.Services
                             out parsedDate))
                     {
                         _logger.LogWarning("Failed to parse date: {Date}", rawDate);
+<<<<<<< HEAD
                         continue;
+=======
+                        continue; // skip broken data instead of crashing
+>>>>>>> e28531f (comments fixed)
                     }
 
                     matches.Add(new PsvMatch

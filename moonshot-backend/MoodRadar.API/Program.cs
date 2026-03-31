@@ -4,7 +4,6 @@ using MoodRadar.API.Data;
 using Microsoft.EntityFrameworkCore;
 
 Env.Load();
-﻿using MoodRadar.API.Services;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -84,6 +83,11 @@ builder.Services.AddSingleton<IWeatherService>(sp =>
 
 builder.Services.AddSingleton<ITicketmasterService>(sp =>
     sp.GetRequiredService<TicketmasterService>());
+builder.Services.AddEndpointsApiExplorer();
+builder.Services.AddSwaggerGen();
+
+// Register mock data service (Phase 1 - development)
+builder.Services.AddSingleton<IMockDataService, MockDataService>();
 
 builder.Services.AddHostedService<MoodUpdateService>();
 
@@ -91,7 +95,6 @@ builder.Services.AddHostedService<MoodUpdateService>();
 var allowedOrigins = builder.Environment.IsProduction()
     ? new[] { "" }
     : new[] { "http://localhost:3000" };
-
 // Configure CORS for frontend access
 // Configure CORS
 // Register HolidayService
