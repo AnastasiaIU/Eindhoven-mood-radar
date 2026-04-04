@@ -2,7 +2,9 @@ namespace MoodRadar.API.Services;
 
 using MoodRadar.API.Models.Domain;
 using MoodRadar.API.Data;
+using MoodRadar.API.Utilities;
 using System.Text.Json;
+using Microsoft.EntityFrameworkCore;
 
 /// <summary>
 /// Service for polling Open-Meteo weather API and caching hourly forecasts.
@@ -67,6 +69,7 @@ public class WeatherService : IWeatherService
     public async Task<List<Weather>> FetchEindhovenWeatherAsync(CancellationToken cancellationToken = default)
     {
         var weatherList = new List<Weather>();
+        var retryPolicy = new RetryPolicy(_logger, maxRetries: 3, initialDelayMs: 1000);
 
         try
         {
@@ -82,9 +85,20 @@ public class WeatherService : IWeatherService
                             $"&forecast_days=1";
 
             var url = BaseUrl + queryParams;
-            _logger.LogDebug("Calling Open-Meteo API: {Url}", url);
+            _logger.LogDebug("Calling Open-Meteo API with retry: {Url}", url);
             
-            var response = await _httpClient.GetAsync(url, cancellationToken);
+            // Retry with exponential backoff
+            var response = await retryPolicy.ExecuteAsync(
+                ct => _httpClient.GetAsync(url, ct),
+                "Open-Meteo weather API",
+                cancellationToken
+            );
+
+            if (response == null)
+            {
+                _logger.LogWarning("Open-Meteo API failed after retries; keeping existing weather data");
+                return weatherList;
+            }
 
             if (!response.IsSuccessStatusCode)
             {
@@ -172,19 +186,17 @@ public class WeatherService : IWeatherService
                         {
                             var dbContext = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
 
-                            // Clear old weather records first (keep only last day)
-                            var cutoffTime = DateTime.UtcNow.AddDays(-1);
-                            var oldRecords = dbContext.Weathers.Where(w => w.SnapshotHour < cutoffTime).ToList();
-                            if (oldRecords.Any())
+                            // Clear ALL existing weather records with ExecuteDeleteAsync (no tracking conflicts)
+                            var deletedCount = await dbContext.Weathers.ExecuteDeleteAsync();
+                            if (deletedCount > 0)
                             {
-                                dbContext.Weathers.RemoveRange(oldRecords);
-                                _logger.LogDebug("Removed {Count} old weather records from database", oldRecords.Count);
+                                _logger.LogDebug("Deleted {Count} existing weather records from database", deletedCount);
                             }
 
                             // Add new records
                             dbContext.Weathers.AddRange(weatherList);
                             await dbContext.SaveChangesAsync();
-                            _logger.LogInformation("Saved {Count} weather records to database", weatherList.Count);
+                            _logger.LogInformation("Saved {Count} fresh weather records to database", weatherList.Count);
                         }
                     }
                     catch (Exception dbEx)
@@ -210,19 +222,63 @@ public class WeatherService : IWeatherService
         }
         catch (HttpRequestException ex)
         {
-            _logger.LogError(ex, "HTTP error while calling Open-Meteo API");
+            _logger.LogError(ex, "HTTP error while calling Open-Meteo API - loading fallback data from database");
+            var fallback = await LoadFallbackWeatherFromDbAsync();
+            return fallback.Any() ? fallback : weatherList;
         }
         catch (JsonException ex)
         {
-            _logger.LogError(ex, "JSON parsing error from Open-Meteo response");
+            _logger.LogError(ex, "JSON parsing error from Open-Meteo response - loading fallback data from database");
+            var fallback = await LoadFallbackWeatherFromDbAsync();
+            return fallback.Any() ? fallback : weatherList;
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Unexpected error fetching weather from Open-Meteo");
+            _logger.LogError(ex, "Unexpected error fetching weather from Open-Meteo - loading fallback data from database");
+            var fallback = await LoadFallbackWeatherFromDbAsync();
+            return fallback.Any() ? fallback : weatherList;
         }
 
         _logger.LogInformation("FetchEindhovenWeatherAsync completed. Returning {Count} records", weatherList.Count);
         return weatherList;
+    }
+
+    /// <summary>
+    /// Load existing weather data from database as fallback when API fails.
+    /// Returns the most recent 24-hour window of data available.
+    /// </summary>
+    private async Task<List<Weather>> LoadFallbackWeatherFromDbAsync()
+    {
+        try
+        {
+            using (var scope = _serviceProvider.CreateScope())
+            {
+                var dbContext = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
+                
+                var fallbackData = await dbContext.Weathers
+                    .OrderByDescending(w => w.SnapshotHour)
+                    .Take(24) // Get most recent 24 hours
+                    .ToListAsync();
+                
+                if (fallbackData.Any())
+                {
+                    var maxHour = fallbackData.Max(w => w.SnapshotHour);
+                    _logger.LogInformation("Loaded {Count} fallback weather records from database (most recent: {MaxHour}, stale data due to API failure)", 
+                        fallbackData.Count, maxHour);
+                }
+                else
+                {
+                    _logger.LogWarning("No fallback weather data available in database");
+                }
+                
+                return fallbackData;
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to load fallback weather from database");
+            return new List<Weather>();
+        }
     }
 
     /// <summary>
