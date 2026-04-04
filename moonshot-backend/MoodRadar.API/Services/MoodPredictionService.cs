@@ -1,0 +1,196 @@
+namespace MoodRadar.API.Services;
+
+using MoodRadar.API.Data;
+using MoodRadar.API.Models.Domain;
+using Microsoft.EntityFrameworkCore;
+
+/// <summary>
+/// Mock mood prediction service for Phase 1.
+/// Generates deterministic mood labels based on aggregated data.
+/// Will be replaced with real ML model in Phase 2.
+/// 
+/// Mood rules (simple heuristics):
+/// - Energetic: Many events (>5) + warm weather (>18°C) + evening (18:00-23:59)
+/// - Intense: PSV match + large events + crowd indicators
+/// - Busy: Many events (3-5) + daytime (08:00-17:59)
+/// - Relaxed: Few events (1-2) + mild weather + evening
+/// - Calm: No events + quiet hours (23:00-08:00) or cold (<10°C)
+/// </summary>
+public class MoodPredictionService
+{
+    private readonly IServiceProvider _serviceProvider;
+    private readonly ILogger<MoodPredictionService> _logger;
+
+    public MoodPredictionService(IServiceProvider serviceProvider, ILogger<MoodPredictionService> logger)
+    {
+        _serviceProvider = serviceProvider;
+        _logger = logger;
+    }
+
+    /// <summary>
+    /// Generate mood predictions for all neighborhoods and store in database.
+    /// Called by cron job after fetching all data sources.
+    /// </summary>
+    public async Task PredictAndStoreAsync(CancellationToken cancellationToken = default)
+    {
+        try
+        {
+            using (var scope = _serviceProvider.CreateScope())
+            {
+                var dbContext = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
+
+                // Get all neighborhoods
+                var neighborhoods = await dbContext.Neighborhoods.ToListAsync(cancellationToken);
+                _logger.LogInformation("Generating mock mood predictions for {Count} neighborhoods", neighborhoods.Count);
+
+                var now = DateTime.UtcNow;
+                var predictions = new List<NeighborhoodSnapshot>();
+
+                foreach (var neighborhood in neighborhoods)
+                {
+                    var prediction = await PredictMoodForNeighborhoodAsync(dbContext, neighborhood, now, cancellationToken);
+                    predictions.Add(prediction);
+                }
+
+                // Store predictions
+                dbContext.NeighborhoodSnapshots.AddRange(predictions);
+                await dbContext.SaveChangesAsync(cancellationToken);
+                
+                _logger.LogInformation("Stored {Count} mood predictions to database", predictions.Count);
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error generating mood predictions");
+        }
+    }
+
+    /// <summary>
+    /// Generate a single mood prediction for a neighborhood.
+    /// </summary>
+    private async Task<NeighborhoodSnapshot> PredictMoodForNeighborhoodAsync(
+        ApplicationDbContext dbContext,
+        Neighborhood neighborhood,
+        DateTime timestamp,
+        CancellationToken cancellationToken)
+    {
+        // Fetch aggregated data for this neighborhood
+        var eventCount = await dbContext.Events
+            .Where(e => e.NeighborhoodId == neighborhood.Id && e.StartTime >= timestamp && e.StartTime < timestamp.AddHours(24))
+            .CountAsync(cancellationToken);
+
+        var hasLargeEvent = await dbContext.Events
+            .Where(e => e.NeighborhoodId == neighborhood.Id && e.StartTime >= timestamp && e.StartTime < timestamp.AddHours(24))
+            .AnyAsync(e => e.Category == "Sports" || e.Title.Contains("PSV"), cancellationToken);
+
+        // var hasPsvMatch = await dbContext.PsvMatches
+        //     .AnyAsync(p => p.MatchDate >= timestamp && p.MatchDate < timestamp.AddHours(24), cancellationToken);
+
+        var latestWeather = await dbContext.Weathers
+            .OrderByDescending(w => w.SnapshotHour)
+            .FirstOrDefaultAsync(cancellationToken);
+
+        // var isHoliday = await dbContext.Holidays
+        //     .AnyAsync(h => h.Date.Date == timestamp.Date, cancellationToken);
+
+        // Simple mood rules
+        var (moodLabel, confidence) = DetermineMood(
+            eventCount, hasLargeEvent, false/*hasPsvMatch*/, latestWeather, false/*isHoliday*/, timestamp
+        );
+
+        var prediction = new NeighborhoodSnapshot
+        {
+            NeighborhoodId = neighborhood.Id,
+            Timestamp = timestamp,
+            MoodLabel = moodLabel,
+            Confidence = confidence,
+            FeatureJson = new Dictionary<string, object>
+            {
+                { "event_count", eventCount },
+                { "has_large_event", hasLargeEvent },
+                { "has_psv_match", false/*hasPsvMatch*/ },
+                { "temperature_c", latestWeather?.TemperatureC ?? 15.0 },
+                { "is_holiday", false/*isHoliday*/ },
+                { "hour_of_day", timestamp.Hour }
+            }
+        };
+
+        return prediction;
+    }
+
+    /// <summary>
+    /// Determine mood label based on aggregated features.
+    /// Returns (mood_label, confidence_score).
+    /// </summary>
+    private (string moodLabel, double confidence) DetermineMood(
+        int eventCount,
+        bool hasLargeEvent,
+        bool hasPsvMatch,
+        Weather? weather,
+        bool isHoliday,
+        DateTime timestamp)
+    {
+        var temp = weather?.TemperatureC ?? 15.0;
+        var hour = timestamp.Hour;
+        var dayOfWeek = timestamp.DayOfWeek;
+
+        // Weekend multiplier
+        var isWeekend = dayOfWeek == DayOfWeek.Saturday || dayOfWeek == DayOfWeek.Sunday;
+
+        // PSV match → Intense
+        if (hasPsvMatch)
+        {
+            return ("Intense", 0.95);
+        }
+
+        // Large event (concert, festival) → Intense
+        if (hasLargeEvent && eventCount > 3)
+        {
+            return ("Intense", 0.85);
+        }
+
+        // Many events (3+) during day → Busy
+        if (eventCount >= 3 && hour >= 8 && hour < 18)
+        {
+            return ("Busy", 0.80);
+        }
+
+        // Many events (5+) + warm evening → Energetic
+        if (eventCount >= 5 && temp >= 18 && hour >= 18 && hour < 24)
+        {
+            return ("Energetic", 0.80);
+        }
+
+        // Few events + warm + evening → Relaxed
+        if (eventCount <= 2 && temp >= 15 && hour >= 18)
+        {
+            return ("Relaxed", 0.70);
+        }
+
+        // No events + night time → Calm
+        if (eventCount == 0 && (hour < 8 || hour >= 23))
+        {
+            return ("Calm", 0.85);
+        }
+
+        // Cold weather → Calm
+        if (temp < 10 && eventCount <= 1)
+        {
+            return ("Calm", 0.75);
+        }
+
+        // Holiday modifier
+        if (isHoliday && eventCount >= 2)
+        {
+            return ("Energetic", 0.75);
+        }
+
+        // Default: Relaxed or Calm based on event count
+        if (eventCount == 0)
+        {
+            return ("Calm", 0.60);
+        }
+
+        return ("Relaxed", 0.65);
+    }
+}
