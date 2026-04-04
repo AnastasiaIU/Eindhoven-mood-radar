@@ -1,13 +1,15 @@
 namespace MoodRadar.API.Services;
 
 using MoodRadar.API.Models.Integrations;
+using MoodRadar.API.Models.Domain;
+using MoodRadar.API.Data;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using System.Net.Http.Headers;
 
 /// <summary>
-/// Service for polling Ticketmaster Discovery API v2 and caching results.
-/// Fetches events once (via cron), serves from in-memory cache to minimize API calls.
+/// Service for polling Ticketmaster Discovery API v2.
+/// Fetches events from the API and returns results.
 /// 
 /// API Documentation: https://developer.ticketmaster.com/products-and-docs/apis/discovery-api/v2/
 /// </summary>
@@ -15,20 +17,10 @@ public interface ITicketmasterService
 {
     /// <summary>
     /// Poll Ticketmaster for all Eindhoven events (next 24 hours).
-    /// Fetches all pages, updates in-memory cache.
-    /// Called by: cron job / background service to refresh cache.
+    /// Fetches all pages, returns results.
+    /// Called by: cron job / background service to refresh data.
     /// </summary>
     Task<List<TicketmasterEvent>> PollEindhovenEventsAsync(CancellationToken cancellationToken = default);
-
-    /// <summary>
-    /// Get all cached events.
-    /// </summary>
-    List<TicketmasterEvent> GetCachedEvents();
-
-    /// <summary>
-    /// Get cached event by ID.
-    /// </summary>
-    TicketmasterEvent? GetCachedEventById(string eventId);
 }
 
 public class TicketmasterService : ITicketmasterService
@@ -36,9 +28,7 @@ public class TicketmasterService : ITicketmasterService
     private readonly HttpClient _httpClient;
     private readonly ILogger<TicketmasterService> _logger;
     private readonly IConfiguration _configuration;
-
-    // In-memory cache
-    private List<TicketmasterEvent> _cachedEvents = new();
+    private readonly IServiceProvider _serviceProvider;
 
     // City name for search (Eindhoven)
     private const string CityName = "Eindhoven";
@@ -47,11 +37,12 @@ public class TicketmasterService : ITicketmasterService
     private const string BaseUrl = "https://app.ticketmaster.com/discovery/v2/";
     private const int MaxPageSize = 50; // Ticketmaster API limit per page
     private const int EventLookAheadHours = 24; // Only fetch events for next 24 hours
-    public TicketmasterService(HttpClient httpClient, ILogger<TicketmasterService> logger, IConfiguration configuration)
+    public TicketmasterService(HttpClient httpClient, ILogger<TicketmasterService> logger, IConfiguration configuration, IServiceProvider serviceProvider)
     {
         _httpClient = httpClient;
         _logger = logger;
         _configuration = configuration;
+        _serviceProvider = serviceProvider;
 
         // Set base address
         _httpClient.BaseAddress = new Uri(BaseUrl);
@@ -110,9 +101,48 @@ public class TicketmasterService : ITicketmasterService
                 }
             }
 
-            // Cache all results for frontend pagination
-            _cachedEvents = allEvents;
-            _logger.LogInformation("Poll completed. Fetched {Count} total events. Cached for serving.", allEvents.Count);
+            // Return fetched results
+            _logger.LogInformation("Poll completed. Fetched {Count} total events.", allEvents.Count);
+            
+            // Save to database
+            try
+            {
+                using (var scope = _serviceProvider.CreateScope())
+                {
+                    var dbContext = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
+
+                    // Clear old events first (keep only next 24 hours)
+                    var cutoffTime = DateTime.UtcNow;
+                    var oldRecords = dbContext.Events.Where(e => e.StartTime < cutoffTime).ToList();
+                    if (oldRecords.Any())
+                    {
+                        dbContext.Events.RemoveRange(oldRecords);
+                        _logger.LogDebug("Removed {Count} old events from database", oldRecords.Count);
+                    }
+
+                    // Map TicketmasterEvent to Event domain objects
+                    var domainEvents = allEvents.Select(te => new Event
+                    {
+                        ExternalId = te.Id,
+                        Source = "Ticketmaster",
+                        Title = te.Name,
+                        StartTime = te.Dates?.Start?.DateTime ?? DateTime.UtcNow,
+                        EndTime = te.Dates?.End?.DateTime,
+                        Category = te.Classifications.FirstOrDefault()?.Segment?.Name ?? "Other",
+                        CachedAt = DateTime.UtcNow
+                    }).ToList();
+
+                    // Add new records
+                    dbContext.Events.AddRange(domainEvents);
+                    await dbContext.SaveChangesAsync();
+                    _logger.LogInformation("Saved {Count} events to database", domainEvents.Count);
+                }
+            }
+            catch (Exception dbEx)
+            {
+                _logger.LogError(dbEx, "Error saving events to database.");
+            }
+            
             return allEvents;
         }
         catch (HttpRequestException ex)
@@ -125,37 +155,6 @@ public class TicketmasterService : ITicketmasterService
             _logger.LogError(ex, "JSON parsing error in Ticketmaster response");
             throw;
         }
-    }
-
-    /// <summary>
-    /// Get cached events from last poll.
-    /// </summary>
-    public List<TicketmasterEvent> GetCachedEvents()
-    {
-        _logger.LogDebug("Returning {Count} cached events", _cachedEvents.Count);
-        return _cachedEvents;
-    }
-
-    /// <summary>
-    /// Get cached event by ID.
-    /// Returns null if not found in cache.
-    /// </summary>
-    public TicketmasterEvent? GetCachedEventById(string eventId)
-    {
-        if (string.IsNullOrWhiteSpace(eventId))
-        {
-            _logger.LogWarning("Event ID is empty");
-            return null;
-        }
-
-        var @event = _cachedEvents.FirstOrDefault(e => e.Id == eventId);
-        
-        if (@event == null)
-        {
-            _logger.LogDebug("Event {EventId} not found in cache", eventId);
-        }
-
-        return @event;
     }
 
     /// <summary>

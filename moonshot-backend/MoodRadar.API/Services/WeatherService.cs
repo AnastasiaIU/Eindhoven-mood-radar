@@ -46,9 +46,6 @@ public class WeatherService : IWeatherService
     private readonly IServiceProvider _serviceProvider;
     private readonly ILogger<WeatherService> _logger;
 
-    // In-memory cache
-    private List<Weather> _cachedWeather = new();
-
     // Eindhoven coordinates
     private const double EindhovenLatitude = 51.4416;
     private const double EindhovenLongitude = 5.4699;
@@ -192,11 +189,8 @@ public class WeatherService : IWeatherService
                     }
                     catch (Exception dbEx)
                     {
-                        _logger.LogError(dbEx, "Error saving weather records to database. Using in-memory cache only.");
+                        _logger.LogError(dbEx, "Error saving weather records to database.");
                     }
-
-                    // Update in-memory cache
-                    _cachedWeather = weatherList;
                 }
                 else
                 {
@@ -232,43 +226,78 @@ public class WeatherService : IWeatherService
     }
 
     /// <summary>
-    /// Get weather data for a specific hour from cache.
+    /// Get weather data for a specific hour from database.
     /// Matches on the hour component (ignores minutes/seconds).
     /// </summary>
     public Weather? GetWeatherByHour(DateTime snapshotHour)
     {
-        // Normalize to UTC and round to nearest hour
-        var normalizedHour = snapshotHour.ToUniversalTime();
-        normalizedHour = normalizedHour.AddMinutes(-normalizedHour.Minute)
-                                      .AddSeconds(-normalizedHour.Second)
-                                      .AddMilliseconds(-normalizedHour.Millisecond);
+        try
+        {
+            using (var scope = _serviceProvider.CreateScope())
+            {
+                var dbContext = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
+                
+                // Normalize to UTC and round to nearest hour
+                var normalizedHour = snapshotHour.ToUniversalTime();
+                normalizedHour = normalizedHour.AddMinutes(-normalizedHour.Minute)
+                                              .AddSeconds(-normalizedHour.Second)
+                                              .AddMilliseconds(-normalizedHour.Millisecond);
 
-        return _cachedWeather.FirstOrDefault(w => w.SnapshotHour == normalizedHour);
+                return dbContext.Weathers.FirstOrDefault(w => w.SnapshotHour == normalizedHour);
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Error querying weather from database");
+            return null;
+        }
     }
 
     /// <summary>
-    /// Get all currently cached weather records.
+    /// Get all weather records from database.
     /// </summary>
     public List<Weather> GetAllCachedWeather()
     {
-        return _cachedWeather.OrderBy(w => w.SnapshotHour).ToList();
+        try
+        {
+            using (var scope = _serviceProvider.CreateScope())
+            {
+                var dbContext = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
+                return dbContext.Weathers.OrderBy(w => w.SnapshotHour).ToList();
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Error querying weather from database");
+            return new List<Weather>();
+        }
     }
 
     /// <summary>
-    /// Remove weather records older than specified days.
-    /// Called by maintenance tasks to keep cache bounded.
+    /// Remove weather records older than specified days from database.
     /// </summary>
-    public Task ClearOldCacheAsync(int olderThanDays = 7)
+    public async Task ClearOldCacheAsync(int olderThanDays = 7)
     {
-        var cutoffTime = DateTime.UtcNow.AddDays(-olderThanDays);
-        var removedCount = _cachedWeather.RemoveAll(w => w.SnapshotHour < cutoffTime);
-        
-        if (removedCount > 0)
+        try
         {
-            _logger.LogInformation("Cleared {Count} old weather cache records (older than {Days} days)", 
-                removedCount, olderThanDays);
+            using (var scope = _serviceProvider.CreateScope())
+            {
+                var dbContext = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
+                var cutoffTime = DateTime.UtcNow.AddDays(-olderThanDays);
+                var oldRecords = dbContext.Weathers.Where(w => w.SnapshotHour < cutoffTime).ToList();
+                
+                if (oldRecords.Any())
+                {
+                    dbContext.Weathers.RemoveRange(oldRecords);
+                    await dbContext.SaveChangesAsync();
+                    _logger.LogInformation("Cleared {Count} old weather records (older than {Days} days)", 
+                        oldRecords.Count, olderThanDays);
+                }
+            }
         }
-
-        return Task.CompletedTask;
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Error clearing old weather records from database");
+        }
     }
 }
