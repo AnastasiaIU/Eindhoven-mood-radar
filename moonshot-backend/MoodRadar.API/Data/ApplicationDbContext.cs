@@ -81,8 +81,8 @@ public class ApplicationDbContext : DbContext
         // Weather configuration
         modelBuilder.Entity<Weather>(entity =>
         {
-            entity.HasKey(e => e.Id);
-            entity.Property(e => e.SnapshotHour).IsRequired();
+            // Use SnapshotHour as primary key (unique per hour)
+            entity.HasKey(e => e.SnapshotHour);
             entity.Property(e => e.TemperatureC).IsRequired();
             entity.Property(e => e.PrecipitationProbability).IsRequired();
             entity.Property(e => e.CloudCover).IsRequired();

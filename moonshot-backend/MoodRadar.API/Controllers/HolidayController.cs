@@ -1,7 +1,5 @@
 ﻿using Microsoft.AspNetCore.Mvc;
 using MoodRadar.API.Services;
-using System;
-using System.Threading.Tasks;
 
 namespace MoodRadar.API.Controllers
 {

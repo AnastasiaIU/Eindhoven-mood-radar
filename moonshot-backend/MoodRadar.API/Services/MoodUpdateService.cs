@@ -1,71 +1,77 @@
-﻿using MoodRadar.API.Services;
-using Microsoft.Extensions.DependencyInjection;
+﻿namespace MoodRadar.API.Services;
+
 using MoodRadar.API.Models;
 
-namespace MoodRadar.API.Services
+/// <summary>
+/// Background service that runs a mood update job every 15 minutes.
+/// </summary>
+public class MoodUpdateService : BackgroundService
 {
-    public class MoodUpdateService : BackgroundService
-    {
-        private readonly ILogger<MoodUpdateService> _logger;
-        private readonly IServiceProvider _serviceProvider;
-        private readonly int _intervalMinutes = 15;
+    private readonly ILogger<MoodUpdateService> _logger;
+    private readonly IServiceProvider _serviceProvider;
+    private readonly int _intervalMinutes = 15;
 
-        public MoodUpdateService(
-            ILogger<MoodUpdateService> logger,
-            IServiceProvider serviceProvider)
+    public MoodUpdateService(
+        ILogger<MoodUpdateService> logger,
+        IServiceProvider serviceProvider)
+    {
+        _logger = logger;
+        _serviceProvider = serviceProvider;
+    }
+
+    protected override async Task ExecuteAsync(CancellationToken stoppingToken)
+    {
+        _logger.LogInformation("Mood Update Service started. Running every {Minutes} minutes.", _intervalMinutes);
+
+        // Run immediately on startup
+        await RunMoodUpdateAsync(stoppingToken);
+
+        // Then run on schedule every 15 minutes
+        while (!stoppingToken.IsCancellationRequested)
         {
-            _logger = logger;
-            _serviceProvider = serviceProvider;
+            await Task.Delay(TimeSpan.FromMinutes(_intervalMinutes), stoppingToken);
+            await RunMoodUpdateAsync(stoppingToken);
         }
 
-        protected override async Task ExecuteAsync(CancellationToken stoppingToken)
+        _logger.LogInformation("Mood Update Service stopped.");
+    }
+
+    private async Task RunMoodUpdateAsync(CancellationToken stoppingToken)
+    {
+        try
         {
-            _logger.LogInformation("Mood Update Service started. Running every {Minutes} minutes.", _intervalMinutes);
+            using var scope = _serviceProvider.CreateScope();
 
-            while (!stoppingToken.IsCancellationRequested)
-            {
-                try
-                {
-                    using var scope = _serviceProvider.CreateScope();
+            var football = scope.ServiceProvider.GetService<FootballService>();
+            var holiday = scope.ServiceProvider.GetService<HolidayService>();
+            var ticketmaster = scope.ServiceProvider.GetService<TicketmasterService>();
+            var weather = scope.ServiceProvider.GetService<WeatherService>();
 
-                    var football = scope.ServiceProvider.GetService<FootballService>();
-                    var holiday = scope.ServiceProvider.GetService<HolidayService>();
-                    var ticketmaster = scope.ServiceProvider.GetService<TicketmasterService>();
-                    var weather = scope.ServiceProvider.GetService<WeatherService>();
+            _logger.LogInformation("[{Time}] Running mood update pipeline", DateTime.UtcNow);
 
-                    _logger.LogInformation("[{Time}] Running mood update pipeline", DateTime.UtcNow);
+            // 1️⃣ Ticketmaster
+            if (ticketmaster != null)
+                await ticketmaster.PollEindhovenEventsAsync(stoppingToken);
 
-                    // 1️⃣ Ticketmaster (may be null if not implemented yet)
-                    var events = ticketmaster != null
-                        ? await ticketmaster.PollEindhovenEventsAsync(stoppingToken)
-                        : new List<TicketmasterEvent>();
+            // 2️⃣ PSV Matches
+            var matches = football != null
+                ? await football.GetPsvMatchesAsync()
+                : new List<PsvMatch>();
 
-                    // 2️⃣ PSV Matches
-                    var matches = football != null
-                        ? await football.GetPsvMatchesAsync()
-                        : new List<PsvMatch>();
+            // 3️⃣ Weather
+            if (weather != null)
+                await weather.FetchEindhovenWeatherAsync(stoppingToken);
 
-                    // 3️⃣ Weather
-                    var weatherData = weather != null
-                        ? await weather.FetchEindhovenWeatherAsync(stoppingToken)
-                        : new object();
+            // 4️⃣ Holidays
+            var holidays = holiday != null
+                ? await holiday.GetDutchHolidays2026Async()
+                : new List<Holiday>();
 
-                    // 4️⃣ Holidays
-                    var holidays = holiday != null
-                        ? await holiday.GetDutchHolidays2026Async()
-                        : new List<Holiday>();
-
-                    _logger.LogInformation("Mood update SUCCESS at {Time}", DateTime.UtcNow);
-                }
-                catch (Exception ex)
-                {
-                    _logger.LogError(ex, "Mood update FAILED");
-                }
-
-                await Task.Delay(TimeSpan.FromMinutes(_intervalMinutes), stoppingToken);
-            }
-
-            _logger.LogInformation("Mood Update Service stopped.");
+            _logger.LogInformation("Mood update SUCCESS at {Time}", DateTime.UtcNow);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Mood update FAILED");
         }
     }
 }
