@@ -3,9 +3,11 @@ namespace MoodRadar.API.Services;
 using MoodRadar.API.Models.Integrations;
 using MoodRadar.API.Models.Domain;
 using MoodRadar.API.Data;
+using MoodRadar.API.Utilities;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using System.Net.Http.Headers;
+using Microsoft.EntityFrameworkCore;
 
 /// <summary>
 /// Service for polling Ticketmaster Discovery API v2.
@@ -59,12 +61,14 @@ public class TicketmasterService : ITicketmasterService
     /// <summary>
     /// Poll Ticketmaster for all Eindhoven events across all pages.
     /// Fetches all available events in minimal API calls (typically just 1 call for a city search).
+    /// With exponential backoff retry (max 3 retries per page).
     /// </summary>
     public async Task<List<TicketmasterEvent>> PollEindhovenEventsAsync(CancellationToken cancellationToken = default)
     {
         var allEvents = new List<TicketmasterEvent>();
         int currentPage = 0;
         bool hasMorePages = true;
+        var retryPolicy = new RetryPolicy(_logger, maxRetries: 3, initialDelayMs: 1000);
 
         _logger.LogInformation("Starting Ticketmaster poll for Eindhoven events. Time window: next {Hours}h", EventLookAheadHours);
 
@@ -74,8 +78,14 @@ public class TicketmasterService : ITicketmasterService
             // Ticketmaster Discovery API limit: size * page < 1000 (e.g., 50 per page max 20 pages)
             while (hasMorePages && currentPage < 20) // Max 20 pages = 1000 events per poll
             {
-                _logger.LogDebug("Fetching page {Page} from Ticketmaster...", currentPage);
-                var response = await FetchPageAsync(currentPage, MaxPageSize, cancellationToken);
+                _logger.LogDebug("Fetching page {Page} from Ticketmaster with retries...", currentPage);
+                
+                // Retry with exponential backoff
+                var response = await retryPolicy.ExecuteAsync(
+                    ct => FetchPageAsync(currentPage, MaxPageSize, ct),
+                    $"Ticketmaster page {currentPage}",
+                    cancellationToken
+                );
 
                 if (response?.Embedded?.Events == null || !response.Embedded.Events.Any())
                 {
@@ -89,7 +99,7 @@ public class TicketmasterService : ITicketmasterService
                     currentPage, response.Embedded.Events.Count, allEvents.Count);
 
                 // Check if there are more pages
-                if (response.Page != null && (currentPage + 1) < response.Page.TotalPages)
+                if (response?.Page != null && (currentPage + 1) < response.Page.TotalPages)
                 {
                     currentPage++;
                     // Rate limiting: small delay between requests (Ticketmaster: 5 req/sec max)
@@ -111,31 +121,39 @@ public class TicketmasterService : ITicketmasterService
                 {
                     var dbContext = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
 
-                    // Clear old events first (keep only next 24 hours)
-                    var cutoffTime = DateTime.UtcNow;
-                    var oldRecords = dbContext.Events.Where(e => e.StartTime < cutoffTime).ToList();
-                    if (oldRecords.Any())
+                    // Only clear old events if we fetched new ones; preserve old events if API failed
+                    if (allEvents.Any())
                     {
-                        dbContext.Events.RemoveRange(oldRecords);
-                        _logger.LogDebug("Removed {Count} old events from database", oldRecords.Count);
+                        // Clear old events first (keep only next 24 hours)
+                        var cutoffTime = DateTime.UtcNow;
+                        var oldRecords = dbContext.Events.Where(e => e.StartTime < cutoffTime).ToList();
+                        if (oldRecords.Any())
+                        {
+                            dbContext.Events.RemoveRange(oldRecords);
+                            _logger.LogDebug("Removed {Count} old events from database", oldRecords.Count);
+                        }
+
+                        // Map TicketmasterEvent to Event domain objects
+                        var domainEvents = allEvents.Select(te => new Event
+                        {
+                            ExternalId = te.Id,
+                            Source = "Ticketmaster",
+                            Title = te.Name,
+                            StartTime = te.Dates?.Start?.DateTime ?? DateTime.UtcNow,
+                            EndTime = te.Dates?.End?.DateTime,
+                            Category = te.Classifications.FirstOrDefault()?.Segment?.Name ?? "Other",
+                            CachedAt = DateTime.UtcNow
+                        }).ToList();
+
+                        // Add new records
+                        dbContext.Events.AddRange(domainEvents);
+                        await dbContext.SaveChangesAsync();
+                        _logger.LogInformation("Saved {Count} events to database", domainEvents.Count);
                     }
-
-                    // Map TicketmasterEvent to Event domain objects
-                    var domainEvents = allEvents.Select(te => new Event
+                    else
                     {
-                        ExternalId = te.Id,
-                        Source = "Ticketmaster",
-                        Title = te.Name,
-                        StartTime = te.Dates?.Start?.DateTime ?? DateTime.UtcNow,
-                        EndTime = te.Dates?.End?.DateTime,
-                        Category = te.Classifications.FirstOrDefault()?.Segment?.Name ?? "Other",
-                        CachedAt = DateTime.UtcNow
-                    }).ToList();
-
-                    // Add new records
-                    dbContext.Events.AddRange(domainEvents);
-                    await dbContext.SaveChangesAsync();
-                    _logger.LogInformation("Saved {Count} events to database", domainEvents.Count);
+                        _logger.LogWarning("No new events fetched; keeping existing events in database");
+                    }
                 }
             }
             catch (Exception dbEx)
@@ -145,15 +163,61 @@ public class TicketmasterService : ITicketmasterService
             
             return allEvents;
         }
-        catch (HttpRequestException ex)
+        catch (OperationCanceledException)
         {
-            _logger.LogError(ex, "HTTP error during Ticketmaster poll");
-            throw;
+            _logger.LogWarning("Ticketmaster poll was cancelled - loading fallback data from database");
+            return await LoadFallbackEventsFromDbAsync();
         }
-        catch (JsonException ex)
+        catch (Exception ex)
         {
-            _logger.LogError(ex, "JSON parsing error in Ticketmaster response");
-            throw;
+            _logger.LogError(ex, "Unexpected error during Ticketmaster poll - loading fallback data from database");
+            return await LoadFallbackEventsFromDbAsync();
+        }
+    }
+
+    /// <summary>
+    /// Load existing events from database as fallback when API fails.
+    /// Returns events for next 24 hours (same window as live poll).
+    /// </summary>
+    private async Task<List<TicketmasterEvent>> LoadFallbackEventsFromDbAsync()
+    {
+        try
+        {
+            using (var scope = _serviceProvider.CreateScope())
+            {
+                var dbContext = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
+                var now = DateTime.UtcNow;
+                
+                var fallbackEvents = await dbContext.Events
+                    .Where(e => e.Source == "Ticketmaster" && e.StartTime >= now && e.StartTime < now.AddHours(24))
+                    .ToListAsync();
+                
+                _logger.LogInformation("Loaded {Count} fallback events from database (stale data due to API failure)", fallbackEvents.Count);
+                
+                // Convert domain Events back to TicketmasterEvent (lossy conversion, but preserves key data)
+                return fallbackEvents.Select(e => new TicketmasterEvent
+                {
+                    Id = e.ExternalId,
+                    Name = e.Title,
+                    Dates = new TicketmasterDates
+                    {
+                        Start = new TicketmasterDateTime { DateTime = e.StartTime },
+                        End = new TicketmasterDateTime { DateTime = e.EndTime }
+                    },
+                    Classifications = new List<TicketmasterClassification>
+                    {
+                        new TicketmasterClassification
+                        {
+                            Segment = new TicketmasterSegment { Name = e.Category }
+                        }
+                    }
+                }).ToList();
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to load fallback events from database");
+            return new List<TicketmasterEvent>();
         }
     }
 

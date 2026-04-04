@@ -111,7 +111,9 @@ public class MoodPredictionService
                 { "has_psv_match", false/*hasPsvMatch*/ },
                 { "temperature_c", latestWeather?.TemperatureC ?? 15.0 },
                 { "is_holiday", false/*isHoliday*/ },
-                { "hour_of_day", timestamp.Hour }
+                { "hour_of_day", timestamp.Hour },
+                // Flag data as stale if weather is older than 1 hour
+                { "is_stale", latestWeather == null || (timestamp - latestWeather.SnapshotHour).TotalMinutes > 60 }
             }
         };
 
