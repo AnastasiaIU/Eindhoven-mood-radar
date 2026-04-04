@@ -46,6 +46,7 @@ public class MoodUpdateService : BackgroundService
             var holiday = scope.ServiceProvider.GetService<HolidayService>();
             var ticketmaster = scope.ServiceProvider.GetService<TicketmasterService>();
             var weather = scope.ServiceProvider.GetService<WeatherService>();
+            var moodPrediction = scope.ServiceProvider.GetService<MoodPredictionService>();
 
             _logger.LogInformation("[{Time}] Running mood update pipeline", DateTime.UtcNow);
 
@@ -66,6 +67,10 @@ public class MoodUpdateService : BackgroundService
             var holidays = holiday != null
                 ? await holiday.GetDutchHolidays2026Async()
                 : new List<Holiday>();
+
+            // 5️⃣ Mood Predictions (mock for Phase 1)
+            if (moodPrediction != null)
+                await moodPrediction.PredictAndStoreAsync(stoppingToken);
 
             _logger.LogInformation("Mood update SUCCESS at {Time}", DateTime.UtcNow);
         }

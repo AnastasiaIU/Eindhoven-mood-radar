@@ -53,6 +53,7 @@ builder.Services.AddSingleton<IWeatherService>(sp =>
 });
 
 // Register other services
+builder.Services.AddScoped<MoodPredictionService>();
 builder.Services.AddHostedService<MoodUpdateService>();
 
 // Register Football service with HttpClient
