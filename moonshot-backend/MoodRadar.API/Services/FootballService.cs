@@ -1,6 +1,7 @@
 ﻿using System.Globalization;
 using Newtonsoft.Json.Linq;
 using MoodRadar.API.Models;
+using MoodRadar.API.Utilities;
 
 namespace MoodRadar.API.Services
 {
@@ -20,13 +21,27 @@ namespace MoodRadar.API.Services
 
         public async Task<List<PsvMatch>> GetPsvMatchesAsync()
         {
+            var retryPolicy = new RetryPolicy(_logger, maxRetries: 3, initialDelayMs: 1000);
+            
             try
             {
-                var response = await _client.GetAsync("matches?teams=674");
+                _logger.LogDebug("Fetching PSV matches from football-data.org with retry");
+                
+                var response = await retryPolicy.ExecuteAsync(
+                    ct => _client.GetAsync("matches?teams=674", ct),
+                    "Football-Data PSV matches API",
+                    CancellationToken.None
+                );
+                
+                if (response == null)
+                {
+                    _logger.LogWarning("Football API failed after retries; keeping existing PSV matches");
+                    return new List<PsvMatch>();
+                }
                 
                 if (!response.IsSuccessStatusCode)
                 {
-                    _logger.LogWarning("Football API returned {StatusCode}: {ReasonPhrase}", 
+                    _logger.LogWarning("Football API returned {StatusCode}: {ReasonPhrase} - keeping existing data", 
                         response.StatusCode, response.ReasonPhrase);
                     return new List<PsvMatch>();
                 }
