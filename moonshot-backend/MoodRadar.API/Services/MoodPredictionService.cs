@@ -28,7 +28,7 @@ public class MoodPredictionService
     }
 
     /// <summary>
-    /// Generate mood predictions for all neighborhoods and store in database.
+    /// Generate 24-hour hourly mood forecasts for all neighborhoods and store in database.
     /// Called by cron job after fetching all data sources.
     /// </summary>
     public async Task PredictAndStoreAsync(CancellationToken cancellationToken = default)
@@ -41,22 +41,67 @@ public class MoodPredictionService
 
                 // Get all neighborhoods
                 var neighborhoods = await dbContext.Neighborhoods.ToListAsync(cancellationToken);
-                _logger.LogInformation("Generating mock mood predictions for {Count} neighborhoods", neighborhoods.Count);
+                var (forecastStartUtc, forecastEndUtcExclusive) = GetForecastWindowUtc();
 
-                var now = DateTime.UtcNow;
+                _logger.LogInformation(
+                    "Generating hourly mood forecasts for {Count} neighborhoods ({Start} to {End})",
+                    neighborhoods.Count,
+                    forecastStartUtc,
+                    forecastEndUtcExclusive);
+
+                // Remove existing snapshots in the target forecast window to keep one row per hour.
+                var deletedCount = await dbContext.NeighborhoodSnapshots
+                    .Where(s => s.Timestamp >= forecastStartUtc && s.Timestamp < forecastEndUtcExclusive)
+                    .ExecuteDeleteAsync(cancellationToken);
+
+                if (deletedCount > 0)
+                {
+                    _logger.LogInformation("Removed {Count} existing snapshots in forecast window", deletedCount);
+                }
+
+                // Preload relevant events for the full 24-hour prediction horizon.
+                var eventsInWindow = await dbContext.Events
+                    .AsNoTracking()
+                    .Where(e => e.NeighborhoodId.HasValue
+                                && e.StartTime >= forecastStartUtc
+                                && e.StartTime < forecastEndUtcExclusive.AddHours(24))
+                    .ToListAsync(cancellationToken);
+
+                var eventsByNeighborhood = eventsInWindow
+                    .GroupBy(e => e.NeighborhoodId!.Value)
+                    .ToDictionary(g => g.Key, g => g.ToList());
+
+                var latestWeather = await dbContext.Weathers
+                    .AsNoTracking()
+                    .OrderByDescending(w => w.SnapshotHour)
+                    .FirstOrDefaultAsync(cancellationToken);
+
                 var predictions = new List<NeighborhoodSnapshot>();
 
                 foreach (var neighborhood in neighborhoods)
                 {
-                    var prediction = await PredictMoodForNeighborhoodAsync(dbContext, neighborhood, now, cancellationToken);
-                    predictions.Add(prediction);
+                    var neighborhoodEvents = eventsByNeighborhood.TryGetValue(neighborhood.Id, out var value)
+                        ? value
+                        : new List<Event>();
+
+                    for (var hourOffset = 0; hourOffset < 24; hourOffset++)
+                    {
+                        var predictionTimestamp = forecastStartUtc.AddHours(hourOffset);
+                        var prediction = PredictMoodForNeighborhood(
+                            neighborhood,
+                            predictionTimestamp,
+                            neighborhoodEvents,
+                            latestWeather);
+
+                        predictions.Add(prediction);
+                    }
                 }
 
                 // Store predictions
                 dbContext.NeighborhoodSnapshots.AddRange(predictions);
                 await dbContext.SaveChangesAsync(cancellationToken);
                 
-                _logger.LogInformation("Stored {Count} mood predictions to database", predictions.Count);
+                _logger.LogInformation("Stored {Count} hourly mood snapshots to database", predictions.Count);
             }
         }
         catch (Exception ex)
@@ -66,29 +111,26 @@ public class MoodPredictionService
     }
 
     /// <summary>
-    /// Generate a single mood prediction for a neighborhood.
+    /// Generate a single mood prediction for a neighborhood at a specific hour.
     /// </summary>
-    private async Task<NeighborhoodSnapshot> PredictMoodForNeighborhoodAsync(
-        ApplicationDbContext dbContext,
+    private NeighborhoodSnapshot PredictMoodForNeighborhood(
         Neighborhood neighborhood,
         DateTime timestamp,
-        CancellationToken cancellationToken)
+        IReadOnlyCollection<Event> neighborhoodEvents,
+        Weather? latestWeather)
     {
-        // Fetch aggregated data for this neighborhood
-        var eventCount = await dbContext.Events
-            .Where(e => e.NeighborhoodId == neighborhood.Id && e.StartTime >= timestamp && e.StartTime < timestamp.AddHours(24))
-            .CountAsync(cancellationToken);
+        // Forecast based on events occurring in the next 24 hours from this timestamp.
+        var horizonEnd = timestamp.AddHours(24);
+        var upcomingEvents = neighborhoodEvents
+            .Where(e => e.StartTime >= timestamp && e.StartTime < horizonEnd)
+            .ToList();
 
-        var hasLargeEvent = await dbContext.Events
-            .Where(e => e.NeighborhoodId == neighborhood.Id && e.StartTime >= timestamp && e.StartTime < timestamp.AddHours(24))
-            .AnyAsync(e => e.Category == "Sports" || e.Title.Contains("PSV"), cancellationToken);
+        var eventCount = upcomingEvents.Count;
 
-        // var hasPsvMatch = await dbContext.PsvMatches
-        //     .AnyAsync(p => p.MatchDate >= timestamp && p.MatchDate < timestamp.AddHours(24), cancellationToken);
-
-        var latestWeather = await dbContext.Weathers
-            .OrderByDescending(w => w.SnapshotHour)
-            .FirstOrDefaultAsync(cancellationToken);
+        var hasLargeEvent = upcomingEvents.Any(e =>
+            e.Title.Contains("PSV", StringComparison.OrdinalIgnoreCase)
+            || e.Title.Contains("Football", StringComparison.OrdinalIgnoreCase)
+            || e.Title.Contains("Concert", StringComparison.OrdinalIgnoreCase));
 
         // var isHoliday = await dbContext.Holidays
         //     .AnyAsync(h => h.Date.Date == timestamp.Date, cancellationToken);
@@ -118,6 +160,15 @@ public class MoodPredictionService
         };
 
         return prediction;
+    }
+
+    private static (DateTime ForecastStartUtc, DateTime ForecastEndUtcExclusive) GetForecastWindowUtc()
+    {
+        var utcNow = DateTime.UtcNow;
+        var nextHourUtc = new DateTime(utcNow.Year, utcNow.Month, utcNow.Day, utcNow.Hour, 0, 0, DateTimeKind.Utc)
+            .AddHours(1);
+
+        return (nextHourUtc, nextHourUtc.AddHours(24));
     }
 
     /// <summary>

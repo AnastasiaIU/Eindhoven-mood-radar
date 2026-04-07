@@ -62,11 +62,6 @@ namespace MoodRadar.API.Migrations
                         .HasColumnType("timestamp with time zone")
                         .HasDefaultValueSql("CURRENT_TIMESTAMP");
 
-                    b.Property<string>("Category")
-                        .IsRequired()
-                        .HasMaxLength(100)
-                        .HasColumnType("character varying(100)");
-
                     b.Property<string>("Description")
                         .HasColumnType("text");
 
@@ -209,11 +204,8 @@ namespace MoodRadar.API.Migrations
 
             modelBuilder.Entity("MoodRadar.API.Models.Domain.Weather", b =>
                 {
-                    b.Property<int>("Id")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("integer");
-
-                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<int>("Id"));
+                    b.Property<DateTime>("SnapshotHour")
+                        .HasColumnType("timestamp with time zone");
 
                     b.Property<DateTime>("CachedAt")
                         .ValueGeneratedOnAdd()
@@ -226,13 +218,10 @@ namespace MoodRadar.API.Migrations
                     b.Property<int>("PrecipitationProbability")
                         .HasColumnType("integer");
 
-                    b.Property<DateTime>("SnapshotHour")
-                        .HasColumnType("timestamp with time zone");
-
                     b.Property<double>("TemperatureC")
                         .HasColumnType("double precision");
 
-                    b.HasKey("Id");
+                    b.HasKey("SnapshotHour");
 
                     b.HasIndex("SnapshotHour");
 

@@ -37,9 +37,6 @@ public class EventResponseDto
     [JsonPropertyName("endTime")]
     public DateTime? EndTime { get; set; }
 
-    [JsonPropertyName("category")]
-    public string? Category { get; set; }
-
     [JsonPropertyName("url")]
     public string? Url { get; set; }
 
