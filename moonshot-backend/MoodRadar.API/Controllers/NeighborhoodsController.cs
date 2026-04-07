@@ -24,7 +24,7 @@ public class NeighborhoodsController : ControllerBase
 
     /// <summary>
     /// GET /api/neighborhoods
-    /// Returns all neighborhoods in Eindhoven with their current moods, optionally filtered by quarter or district.
+    /// Returns all neighborhoods in Eindhoven, optionally filtered by quarter or district.
     /// </summary>
     [HttpGet]
     [ProducesResponseType(StatusCodes.Status200OK)]
@@ -48,33 +48,18 @@ public class NeighborhoodsController : ControllerBase
                 query = query.Where(n => n.Quarter!.DistrictId == districtId.Value);
             }
 
-            var neighborhoods = await query
+            var response = await query
                 .OrderBy(n => n.Name)
-                .ToListAsync();
-
-            var response = new List<NeighborhoodResponseDto>();
-
-            foreach (var neighborhood in neighborhoods)
-            {
-                var latestSnapshot = await _dbContext.NeighborhoodSnapshots
-                    .AsNoTracking()
-                    .Where(s => s.NeighborhoodId == neighborhood.Id)
-                    .OrderByDescending(s => s.Timestamp)
-                    .FirstOrDefaultAsync();
-
-                response.Add(new NeighborhoodResponseDto
+                .Select(neighborhood => new NeighborhoodResponseDto
                 {
                     Id = neighborhood.Id,
                     Name = neighborhood.Name,
                     QuarterId = neighborhood.QuarterId,
-                    QuarterName = neighborhood.Quarter?.Name ?? "Unknown",
+                    QuarterName = neighborhood.Quarter != null ? neighborhood.Quarter.Name : "Unknown",
                     GeoJsonBoundary = neighborhood.GeoJsonBoundary,
-                    CreatedAt = neighborhood.CreatedAt,
-                    CurrentMood = latestSnapshot?.MoodLabel,
-                    Confidence = latestSnapshot?.Confidence,
-                    LastMoodUpdate = latestSnapshot?.Timestamp
-                });
-            }
+                    CreatedAt = neighborhood.CreatedAt
+                })
+                .ToListAsync();
 
             return Ok(response);
         }
@@ -88,19 +73,20 @@ public class NeighborhoodsController : ControllerBase
 
     /// <summary>
     /// GET /api/neighborhoods/{id}
-    /// Returns a specific neighborhood with its current mood.
+    /// Returns a specific neighborhood.
     /// </summary>
     [HttpGet("{id}")]
     [ProducesResponseType(StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status404NotFound)]
-    public async Task<ActionResult<NeighborhoodMoodDetailResponseDto>> GetNeighborhoodMood(int id)
+    public async Task<ActionResult<NeighborhoodResponseDto>> GetNeighborhood(int id)
     {
-        _logger.LogInformation($"Fetching mood for neighborhood {id}");
+        _logger.LogInformation($"Fetching neighborhood {id}");
         
         try
         {
             var neighborhood = await _dbContext.Neighborhoods
                 .AsNoTracking()
+                .Include(n => n.Quarter)
                 .FirstOrDefaultAsync(n => n.Id == id);
 
             if (neighborhood == null)
@@ -109,34 +95,21 @@ public class NeighborhoodsController : ControllerBase
                 return NotFound(new { message = $"Neighborhood {id} not found" });
             }
 
-            var snapshot = await _dbContext.NeighborhoodSnapshots
-                .AsNoTracking()
-                .Where(s => s.NeighborhoodId == id)
-                .OrderByDescending(s => s.Timestamp)
-                .FirstOrDefaultAsync();
-
-            if (snapshot == null)
+            return Ok(new NeighborhoodResponseDto
             {
-                _logger.LogWarning($"No mood snapshot found for neighborhood {id}");
-                return NotFound(new { message = $"No mood data available for neighborhood {id}" });
-            }
-
-            return Ok(new NeighborhoodMoodDetailResponseDto
-            {
-                NeighborhoodId = neighborhood.Id,
-                NeighborhoodName = neighborhood.Name,
-                MoodLabel = snapshot.MoodLabel,
-                Confidence = snapshot.Confidence,
-                Timestamp = snapshot.Timestamp,
-                Features = snapshot.FeatureJson,
-                LastUpdated = snapshot.Timestamp
+                Id = neighborhood.Id,
+                Name = neighborhood.Name,
+                QuarterId = neighborhood.QuarterId,
+                QuarterName = neighborhood.Quarter != null ? neighborhood.Quarter.Name : "Unknown",
+                GeoJsonBoundary = neighborhood.GeoJsonBoundary,
+                CreatedAt = neighborhood.CreatedAt
             });
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, $"Error fetching mood for neighborhood {id}");
+            _logger.LogError(ex, $"Error fetching neighborhood {id}");
             return StatusCode(StatusCodes.Status500InternalServerError,
-                new { error = "Failed to fetch neighborhood mood", details = ex.Message });
+                new { error = "Failed to fetch neighborhood", details = ex.Message });
         }
     }
 }

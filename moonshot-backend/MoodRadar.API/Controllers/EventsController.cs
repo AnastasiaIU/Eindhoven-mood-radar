@@ -5,6 +5,7 @@ using Microsoft.EntityFrameworkCore;
 using MoodRadar.API.Data;
 using MoodRadar.API.Models.Dtos.Responses;
 using MoodRadar.API.Services;
+using MoodRadar.API.Utilities;
 
 /// <summary>
 /// API endpoints for event polling and serving.
@@ -39,6 +40,7 @@ public class EventsController : ControllerBase
     /// Called by: cron job / background service every 15 minutes (Phase 2).
     /// </summary>
     [HttpPost("refresh")]
+    [NonProductionOnly]
     [ProducesResponseType(StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status500InternalServerError)]
     public async Task<ActionResult<object>> RefreshEvents(CancellationToken cancellationToken = default)
@@ -115,12 +117,6 @@ public class EventsController : ControllerBase
                 query = query.Where(e => e.NeighborhoodId == neighborhoodId.Value);
             }
 
-            // Apply category filter if provided
-            if (!string.IsNullOrWhiteSpace(category))
-            {
-                query = query.Where(e => e.Category.ToLower() == category.ToLower());
-            }
-
             // Count total for pagination
             var totalItems = await query.CountAsync(cancellationToken);
             var totalPages = (int)Math.Ceiling((double)totalItems / pageSize);
@@ -140,7 +136,6 @@ public class EventsController : ControllerBase
                 Source = e.Source,
                 StartTime = e.StartTime,
                 EndTime = e.EndTime,
-                Category = e.Category,
                 Url = e.Url,
                 Latitude = e.Latitude,
                 Longitude = e.Longitude,
@@ -205,7 +200,6 @@ public class EventsController : ControllerBase
                 Source = dbEvent.Source,
                 StartTime = dbEvent.StartTime,
                 EndTime = dbEvent.EndTime,
-                Category = dbEvent.Category,
                 Url = dbEvent.Url,
                 Latitude = dbEvent.Latitude,
                 Longitude = dbEvent.Longitude,

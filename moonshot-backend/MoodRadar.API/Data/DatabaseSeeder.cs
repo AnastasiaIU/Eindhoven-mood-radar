@@ -14,8 +14,9 @@ public static class DatabaseSeeder
         // Check if districts are missing OR neighborhood snapshots are missing
         var hasDistricts = context.Districts.Any();
         var hasNeighborhoodSnapshots = context.NeighborhoodSnapshots.Any();
+        var neighborhoodsNeedGeoJson = context.Neighborhoods.Any(n => string.IsNullOrEmpty(n.GeoJsonBoundary) || n.GeoJsonBoundary == "{}");
 
-        if (hasDistricts && hasNeighborhoodSnapshots)
+        if (hasDistricts && hasNeighborhoodSnapshots && !neighborhoodsNeedGeoJson)
         {
             Console.WriteLine("Database already seeded. Skipping.");
             return;
@@ -23,6 +24,14 @@ public static class DatabaseSeeder
 
         Console.WriteLine("Seeding database with real Eindhoven geographic data...");
         var now = DateTime.UtcNow;
+        var districtBoundaryMap = GetDistrictBoundaryMap();
+        
+        // If neighborhoods need GeoJSON boundaries, update them
+        if (neighborhoodsNeedGeoJson)
+        {
+            Console.WriteLine("Updating neighborhoods with GeoJSON boundaries...");
+            await UpdateNeighborhoodBoundariesAsync(context);
+        }
 
         // Create all 7 districts with quarters and neighborhoods
         var districts = new List<District>();
@@ -31,24 +40,11 @@ public static class DatabaseSeeder
         districts.Add(new District
         {
             Name = "Centrum",
-            GeoJsonBoundary = "{}",
+            GeoJsonBoundary = GetBoundaryOrDefault(districtBoundaryMap, "Centrum"),
             CreatedAt = now,
             Quarters = new List<Quarter>
             {
-                new Quarter
-                {
-                    Name = "Centrum",
-                    GeoJsonBoundary = "{}",
-                    CreatedAt = now,
-                    Neighborhoods = new List<Neighborhood>
-                    {
-                        new Neighborhood { Name = "Binnenstad", GeoJsonBoundary = "{}", CreatedAt = now },
-                        new Neighborhood { Name = "De Bergen", GeoJsonBoundary = "{}", CreatedAt = now },
-                        new Neighborhood { Name = "Witte dame", GeoJsonBoundary = "{}", CreatedAt = now },
-                        new Neighborhood { Name = "Fellenoord", GeoJsonBoundary = "{}", CreatedAt = now },
-                        new Neighborhood { Name = "TU/e terrain", GeoJsonBoundary = "{}", CreatedAt = now }
-                    }
-                }
+                CreateQuarter("Centrum", now, "Binnenstad", "De Bergen", "Witte dame", "Fellenoord", "TU/e terrain")
             }
         });
 
@@ -56,7 +52,7 @@ public static class DatabaseSeeder
         districts.Add(new District
         {
             Name = "Woensel-Noord",
-            GeoJsonBoundary = "{}",
+            GeoJsonBoundary = GetBoundaryOrDefault(districtBoundaryMap, "Woensel-Noord"),
             CreatedAt = now,
             Quarters = new List<Quarter>
             {
@@ -71,7 +67,7 @@ public static class DatabaseSeeder
         districts.Add(new District
         {
             Name = "Woensel-Zuid",
-            GeoJsonBoundary = "{}",
+            GeoJsonBoundary = GetBoundaryOrDefault(districtBoundaryMap, "Woensel-Zuid"),
             CreatedAt = now,
             Quarters = new List<Quarter>
             {
@@ -85,7 +81,7 @@ public static class DatabaseSeeder
         districts.Add(new District
         {
             Name = "Tongelre",
-            GeoJsonBoundary = "{}",
+            GeoJsonBoundary = GetBoundaryOrDefault(districtBoundaryMap, "Tongelre"),
             CreatedAt = now,
             Quarters = new List<Quarter>
             {
@@ -98,7 +94,7 @@ public static class DatabaseSeeder
         districts.Add(new District
         {
             Name = "Stratum",
-            GeoJsonBoundary = "{}",
+            GeoJsonBoundary = GetBoundaryOrDefault(districtBoundaryMap, "Stratum"),
             CreatedAt = now,
             Quarters = new List<Quarter>
             {
@@ -112,7 +108,7 @@ public static class DatabaseSeeder
         districts.Add(new District
         {
             Name = "Strijp",
-            GeoJsonBoundary = "{}",
+            GeoJsonBoundary = GetBoundaryOrDefault(districtBoundaryMap, "Strijp"),
             CreatedAt = now,
             Quarters = new List<Quarter>
             {
@@ -126,7 +122,7 @@ public static class DatabaseSeeder
         districts.Add(new District
         {
             Name = "Gestel",
-            GeoJsonBoundary = "{}",
+            GeoJsonBoundary = GetBoundaryOrDefault(districtBoundaryMap, "Gestel"),
             CreatedAt = now,
             Quarters = new List<Quarter>
             {
@@ -191,107 +187,76 @@ public static class DatabaseSeeder
             Console.WriteLine("Neighborhood snapshots already exist, skipping mood data seeding");
         }
 
-        // Seed Events (next 24 hours)
-        var binnenstad = allNeighborhoods.FirstOrDefault(n => n.Name == "Binnenstad") ?? allNeighborhoods.First();
-        var secondNeighborhood = allNeighborhoods.Count > 1 ? allNeighborhoods[1] : binnenstad;
-        var thirdNeighborhood = allNeighborhoods.Count > 2 ? allNeighborhoods[2] : binnenstad;
-        var fourthNeighborhood = allNeighborhoods.Count > 3 ? allNeighborhoods[3] : binnenstad;
-        var fifthNeighborhood = allNeighborhoods.Count > 4 ? allNeighborhoods[4] : binnenstad;
-
-        var events = new List<Event>
-        {
-            new Event
-            {
-                Title = "Spring Market - City Center",
-                Source = "Ticketmaster",
-                ExternalId = "evt_001",
-                Category = "Markets",
-                StartTime = now.AddHours(2),
-                EndTime = now.AddHours(6),
-                Latitude = 51.4416,
-                Longitude = 5.4699,
-                NeighborhoodId = binnenstad.Id,
-                Url = "https://ticketmaster.com/event/1",
-                CachedAt = now
-            },
-            new Event
-            {
-                Title = "PSV vs Ajax - Football Match",
-                Source = "Ticketmaster",
-                ExternalId = "evt_002",
-                Category = "Sports",
-                StartTime = now.AddHours(4),
-                EndTime = now.AddHours(6),
-                Latitude = 51.4411,
-                Longitude = 5.4697,
-                NeighborhoodId = secondNeighborhood.Id,
-                Url = "https://ticketmaster.com/event/2",
-                CachedAt = now
-            },
-            new Event
-            {
-                Title = "Indie Concert Night",
-                Source = "Ticketmaster",
-                ExternalId = "evt_003",
-                Category = "Music",
-                StartTime = now.AddHours(8),
-                EndTime = now.AddHours(11),
-                Latitude = 51.4333,
-                Longitude = 5.4744,
-                NeighborhoodId = thirdNeighborhood.Id,
-                Url = "https://ticketmaster.com/event/3",
-                CachedAt = now
-            },
-            new Event
-            {
-                Title = "Family Museum Day",
-                Source = "Ticketmaster",
-                ExternalId = "evt_004",
-                Category = "Family",
-                StartTime = now.AddHours(3),
-                EndTime = now.AddHours(7),
-                Latitude = 51.4428,
-                Longitude = 5.4611,
-                NeighborhoodId = fourthNeighborhood.Id,
-                Url = "https://ticketmaster.com/event/4",
-                CachedAt = now
-            },
-            new Event
-            {
-                Title = "Evening Jazz Session",
-                Source = "Ticketmaster",
-                ExternalId = "evt_005",
-                Category = "Music",
-                StartTime = now.AddHours(6),
-                EndTime = now.AddHours(9),
-                Latitude = 51.4500,
-                Longitude = 5.4520,
-                NeighborhoodId = fifthNeighborhood.Id,
-                Url = "https://ticketmaster.com/event/5",
-                CachedAt = now
-            }
-        };
-
-        context.Events.AddRange(events);
-        await context.SaveChangesAsync();
-        Console.WriteLine($"✓ Seeded {events.Count} sample events for next 24 hours");
-
         Console.WriteLine("✓ Database seeding completed successfully!");
     }
 
     private static Quarter CreateQuarter(string quarterName, DateTime createdAt, params string[] neighborhoodNames)
     {
+        var quarterBoundaryMap = GetQuarterBoundaryMap();
+        var neighborhoodBoundaryMap = GetNeighborhoodBoundaryMap();
+
         return new Quarter
         {
             Name = quarterName,
-            GeoJsonBoundary = "{}",
+            GeoJsonBoundary = GetBoundaryOrDefault(quarterBoundaryMap, quarterName),
             CreatedAt = createdAt,
             Neighborhoods = neighborhoodNames.Select(n => new Neighborhood
             {
                 Name = n,
-                GeoJsonBoundary = "{}",
+                GeoJsonBoundary = GetBoundaryOrDefault(neighborhoodBoundaryMap, n),
                 CreatedAt = createdAt
             }).ToList()
         };
+    }
+
+    private static async Task UpdateNeighborhoodBoundariesAsync(ApplicationDbContext context)
+    {
+        var neighborhoodBoundaryMap = GetNeighborhoodBoundaryMap();
+        var neighborhoods = await context.Neighborhoods.ToListAsync();
+        
+        int updated = 0;
+        foreach (var neighborhood in neighborhoods)
+        {
+            if (neighborhoodBoundaryMap.TryGetValue(neighborhood.Name, out var geoJsonBoundary))
+            {
+                neighborhood.GeoJsonBoundary = geoJsonBoundary;
+                updated++;
+            }
+        }
+
+        if (updated > 0)
+        {
+            await context.SaveChangesAsync();
+        }
+        Console.WriteLine($"✓ Updated {updated} neighborhoods with GeoJSON boundaries from PDOK CBS 2023 (106 total neighborhoods)");
+    }
+
+    /// <summary>
+    /// Returns 106 Eindhoven neighborhoods with authentic PDOK CBS 2023 GeoJSON boundaries.
+    /// Fetched from Dutch government spatial data (Basisregistratie Adressen en Gebouwen).
+    /// Each entry contains a complete MultiPolygon or Polygon with real lat/lon coordinates.
+    /// </summary>
+    private static Dictionary<string, string> GetNeighborhoodBoundaryMap()
+    {
+        return NeighborhoodBoundaryMap.Data;
+    }
+
+    /// <summary>
+    /// Returns Eindhoven quarters (wijken) with PDOK CBS 2023 GeoJSON boundaries.
+    /// Quarters are aggregates of neighborhoods.
+    /// </summary>
+    private static Dictionary<string, string> GetQuarterBoundaryMap()
+    {
+        return QuarterBoundaryMap.Data;
+    }
+
+    private static Dictionary<string, string> GetDistrictBoundaryMap()
+    {
+        return DistrictBoundaryMap.Data;
+    }
+
+    private static string GetBoundaryOrDefault(IReadOnlyDictionary<string, string> boundaryMap, string name)
+    {
+        return boundaryMap.TryGetValue(name, out var geoJsonBoundary) ? geoJsonBoundary : "{}";
     }
 }

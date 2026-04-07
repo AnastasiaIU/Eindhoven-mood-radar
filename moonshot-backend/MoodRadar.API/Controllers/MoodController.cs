@@ -1,5 +1,7 @@
 using Microsoft.AspNetCore.Mvc;
 using MoodRadar.API.Data;
+using MoodRadar.API.Models.Domain;
+using MoodRadar.API.Models.Dtos.Responses;
 using Microsoft.EntityFrameworkCore;
 
 namespace MoodRadar.API.Controllers;
@@ -23,30 +25,48 @@ public class MoodController : ControllerBase
 
     /// <summary>
     /// GET /api/mood/neighborhood/{neighborhoodId}
-    /// Returns the latest mood prediction for a specific neighborhood.
+    /// Returns upcoming hourly mood snapshots for the next 24 hours for a specific neighborhood.
     /// </summary>
     [HttpGet("neighborhood/{neighborhoodId}")]
-    public async Task<ActionResult<object>> GetLatestMoodForNeighborhood(int neighborhoodId)
+    public async Task<ActionResult<NeighborhoodForecastResponseDto>> GetUpcomingMoodForNeighborhood(int neighborhoodId)
     {
         try
         {
-            var snapshot = await _dbContext.NeighborhoodSnapshots
-                .Where(s => s.NeighborhoodId == neighborhoodId)
-                .OrderByDescending(s => s.Timestamp)
-                .FirstOrDefaultAsync();
+            var neighborhood = await _dbContext.Neighborhoods
+                .AsNoTracking()
+                .FirstOrDefaultAsync(n => n.Id == neighborhoodId);
 
-            if (snapshot == null)
+            if (neighborhood == null)
             {
-                return NotFound(new { error = "No mood prediction found for this neighborhood" });
+                return NotFound(new { error = "Neighborhood not found" });
             }
 
-            return Ok(new
+            var (forecastStartUtc, forecastEndUtcExclusive) = GetForecastWindowUtc();
+
+            var snapshots = await _dbContext.NeighborhoodSnapshots
+                .AsNoTracking()
+                .Where(s => s.NeighborhoodId == neighborhoodId
+                            && s.Timestamp >= forecastStartUtc
+                            && s.Timestamp < forecastEndUtcExclusive)
+                .OrderBy(s => s.Timestamp)
+                .ThenByDescending(s => s.Id)
+                .ToListAsync();
+
+            // Keep only the latest row per hour when duplicates exist.
+            var normalizedSnapshots = snapshots
+                .GroupBy(s => s.Timestamp)
+                .Select(g => g.OrderByDescending(x => x.Id).First())
+                .OrderBy(s => s.Timestamp)
+                .Select(ToSnapshotDto)
+                .ToList();
+
+            return Ok(new NeighborhoodForecastResponseDto
             {
-                neighborhoodId = snapshot.NeighborhoodId,
-                moodLabel = snapshot.MoodLabel,
-                confidence = snapshot.Confidence,
-                timestamp = snapshot.Timestamp,
-                features = snapshot.FeatureJson
+                NeighborhoodId = neighborhood.Id,
+                NeighborhoodName = neighborhood.Name,
+                ForecastStartUtc = forecastStartUtc,
+                ForecastEndUtcExclusive = forecastEndUtcExclusive,
+                Snapshots = normalizedSnapshots
             });
         }
         catch (Exception ex)
@@ -58,35 +78,57 @@ public class MoodController : ControllerBase
 
     /// <summary>
     /// GET /api/mood/all
-    /// Returns the latest mood predictions for all neighborhoods.
+    /// Returns upcoming hourly mood snapshots for the next 24 hours for all neighborhoods.
     /// </summary>
     [HttpGet("all")]
-    public async Task<ActionResult<IEnumerable<object>>> GetLatestMoodsForAllNeighborhoods()
+    public async Task<ActionResult<object>> GetUpcomingMoodsForAllNeighborhoods()
     {
         try
         {
-            var neighborhoods = await _dbContext.Neighborhoods.ToListAsync();
-            var results = new List<object>();
+            var (forecastStartUtc, forecastEndUtcExclusive) = GetForecastWindowUtc();
 
-            foreach (var neighborhood in neighborhoods)
-            {
-                var latestSnapshot = await _dbContext.NeighborhoodSnapshots
-                    .Where(s => s.NeighborhoodId == neighborhood.Id)
-                    .OrderByDescending(s => s.Timestamp)
-                    .FirstOrDefaultAsync();
+            var neighborhoods = await _dbContext.Neighborhoods
+                .AsNoTracking()
+                .OrderBy(n => n.Name)
+                .Select(n => new { n.Id, n.Name })
+                .ToListAsync();
 
-                results.Add(new
+            var snapshots = await _dbContext.NeighborhoodSnapshots
+                .AsNoTracking()
+                .Where(s => s.Timestamp >= forecastStartUtc
+                            && s.Timestamp < forecastEndUtcExclusive)
+                .OrderBy(s => s.Timestamp)
+                .ThenByDescending(s => s.Id)
+                .ToListAsync();
+
+            // Keep only the latest row per neighborhood+hour when duplicates exist.
+            var snapshotLookup = snapshots
+                .GroupBy(s => new { s.NeighborhoodId, s.Timestamp })
+                .Select(g => g.OrderByDescending(x => x.Id).First())
+                .GroupBy(s => s.NeighborhoodId)
+                .ToDictionary(
+                    g => g.Key,
+                    g => g.OrderBy(x => x.Timestamp).Select(ToSnapshotDto).ToList());
+
+            var results = neighborhoods
+                .Select(n => new NeighborhoodForecastResponseDto
                 {
-                    neighborhoodId = neighborhood.Id,
-                    neighborhoodName = neighborhood.Name,
-                    moodLabel = latestSnapshot?.MoodLabel ?? "Unknown",
-                    confidence = latestSnapshot?.Confidence ?? 0.0,
-                    timestamp = latestSnapshot?.Timestamp ?? DateTime.MinValue,
-                    features = latestSnapshot?.FeatureJson
-                });
-            }
+                    NeighborhoodId = n.Id,
+                    NeighborhoodName = n.Name,
+                    ForecastStartUtc = forecastStartUtc,
+                    ForecastEndUtcExclusive = forecastEndUtcExclusive,
+                    Snapshots = snapshotLookup.TryGetValue(n.Id, out var neighborhoodSnapshots)
+                        ? neighborhoodSnapshots
+                        : new List<NeighborhoodSnapshotResponseDto>()
+                })
+                .ToList();
 
-            return Ok(results);
+            return Ok(new
+            {
+                forecastStartUtc,
+                forecastEndUtcExclusive,
+                neighborhoods = results
+            });
         }
         catch (Exception ex)
         {
@@ -96,47 +138,85 @@ public class MoodController : ControllerBase
     }
 
     /// <summary>
-    /// GET /api/mood/neighborhood/{neighborhoodId}/history
-    /// Returns mood prediction history for a neighborhood (last 24 hours, paginated).
-    /// Query parameters: limit (0-100), offset (0-based)
+    /// GET /api/mood/neighborhood/{neighborhoodId}/snapshot?timestamp={ISO8601}
+    /// Returns a single mood snapshot for a neighborhood at an exact UTC timestamp.
     /// </summary>
-    [HttpGet("neighborhood/{neighborhoodId}/history")]
-    public async Task<ActionResult<IEnumerable<object>>> GetMoodHistory(int neighborhoodId, int limit = 10, int offset = 0)
+    [HttpGet("neighborhood/{neighborhoodId}/snapshot")]
+    public async Task<ActionResult<NeighborhoodSnapshotResponseDto>> GetSnapshotForNeighborhoodAtTimestamp(
+        int neighborhoodId,
+        [FromQuery] DateTime timestamp)
     {
         try
         {
-            if (limit < 1 || limit > 100)
-                return BadRequest(new { error = "limit must be between 1 and 100" });
-
-            if (offset < 0)
-                return BadRequest(new { error = "offset must be >= 0" });
-
-            var snapshots = await _dbContext.NeighborhoodSnapshots
-                .Where(s => s.NeighborhoodId == neighborhoodId)
-                .OrderByDescending(s => s.Timestamp)
-                .Skip(offset)
-                .Take(limit)
-                .ToListAsync();
-
-            if (!snapshots.Any())
+            if (timestamp == default)
             {
-                return NotFound(new { error = "No mood history found for this neighborhood" });
+                return BadRequest(new { error = "Query parameter 'timestamp' is required (ISO-8601 format, UTC recommended)." });
             }
 
-            var results = snapshots.Select(s => new
-            {
-                timestamp = s.Timestamp,
-                moodLabel = s.MoodLabel,
-                confidence = s.Confidence,
-                features = s.FeatureJson
-            });
+            var requestedTimestampUtc = NormalizeToUtc(timestamp);
 
-            return Ok(results);
+            var neighborhoodExists = await _dbContext.Neighborhoods
+                .AsNoTracking()
+                .AnyAsync(n => n.Id == neighborhoodId);
+
+            if (!neighborhoodExists)
+            {
+                return NotFound(new { error = "Neighborhood not found" });
+            }
+
+            var snapshot = await _dbContext.NeighborhoodSnapshots
+                .AsNoTracking()
+                .Where(s => s.NeighborhoodId == neighborhoodId)
+                .Where(s => s.Timestamp == requestedTimestampUtc)
+                .OrderByDescending(s => s.Id)
+                .FirstOrDefaultAsync();
+
+            if (snapshot == null)
+            {
+                return NotFound(new
+                {
+                    error = "No mood snapshot found for this neighborhood at the requested timestamp",
+                    neighborhoodId,
+                    timestamp = requestedTimestampUtc
+                });
+            }
+
+            return Ok(ToSnapshotDto(snapshot));
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Error retrieving mood history for neighborhood {NeighborhoodId}", neighborhoodId);
+            _logger.LogError(ex, "Error retrieving timestamp snapshot for neighborhood {NeighborhoodId}", neighborhoodId);
             return StatusCode(StatusCodes.Status500InternalServerError, new { error = "Internal server error" });
         }
+    }
+
+    private static (DateTime ForecastStartUtc, DateTime ForecastEndUtcExclusive) GetForecastWindowUtc()
+    {
+        var utcNow = DateTime.UtcNow;
+        var nextHourUtc = new DateTime(utcNow.Year, utcNow.Month, utcNow.Day, utcNow.Hour, 0, 0, DateTimeKind.Utc)
+            .AddHours(1);
+
+        return (nextHourUtc, nextHourUtc.AddHours(24));
+    }
+
+    private static NeighborhoodSnapshotResponseDto ToSnapshotDto(NeighborhoodSnapshot snapshot)
+    {
+        return new NeighborhoodSnapshotResponseDto
+        {
+            Timestamp = snapshot.Timestamp,
+            MoodLabel = snapshot.MoodLabel,
+            Confidence = snapshot.Confidence,
+            Features = snapshot.FeatureJson
+        };
+    }
+
+    private static DateTime NormalizeToUtc(DateTime timestamp)
+    {
+        return timestamp.Kind switch
+        {
+            DateTimeKind.Utc => timestamp,
+            DateTimeKind.Local => timestamp.ToUniversalTime(),
+            _ => DateTime.SpecifyKind(timestamp, DateTimeKind.Utc)
+        };
     }
 }

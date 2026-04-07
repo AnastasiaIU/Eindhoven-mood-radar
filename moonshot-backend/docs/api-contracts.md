@@ -1,674 +1,486 @@
 # MoodRadar API Contracts
 
-**Version:** 1.0 (Phase 1)  
-**Environment:** Development (Mock Data)  
-**Base URL:** `http://localhost:5000/api` (development)
+Version: 3.0 (Current Implementation)
+Environment: Development by default
+Base URL: http://localhost:5000/api
 
 ---
 
-## Overview
+## Scope
 
-This document defines the JSON contracts for REST API endpoints. **The backend polls Ticketmaster Discovery API and persists events in PostgreSQL.** Events are updated every 15 minutes via background service.
+This document reflects the current backend implementation in controllers, DTOs, and services.
+It intentionally does not describe removed legacy routes such as `/api/zones`.
 
-**⚠️ DATA COVERAGE NOTE**: Ticketmaster Discovery API returns sparse event coverage for Eindhoven (~2 events per 10 days window). This is a known API limitation for tier-2 Dutch cities, not a code issue. See [ticketmaster_api_audit.md](../docs/ticketmaster_api_audit.md) for full details on limitations, root causes, and Phase 2 mitigation strategies.
+---
 
-### Standard Response Structure (Events)
+## Production Restrictions
 
-Events endpoints return paginated data with metadata:
+The following endpoints are decorated with `NonProductionOnlyAttribute` and return `403` in Production:
 
-```json
-{
-  "data": [...],
-  "pagination": {"page": 0, "pageSize": 20, "totalPages": 1, "totalItems": 5}
-}
-```
+- `POST /api/events/refresh`
+- `POST /api/weather/fetch`
+- `POST /api/scraper/venues`
 
-For errors:
+Error payload in production:
 
 ```json
 {
-  "error": "error message"
+  "error": "This endpoint is disabled in production."
 }
 ```
 
 ---
 
-## 1. GET /api/zones
+## 1) Districts
 
-### Description
+### GET /api/districts
+Returns all districts.
 
-Returns all zones (districts) in Eindhoven.
-
-### Request
-
-```bash
-GET /api/zones
-```
-
-### Response (200 OK)
-
-**Content-Type:** `application/json`
+Response 200:
 
 ```json
 [
   {
     "id": 1,
     "name": "Centrum",
-    "geoJsonBoundary": "{\"type\": \"Polygon\", \"coordinates\": [...]}",
-    "createdAt": "2026-02-15T10:00:00Z"
-  },
-  {
-    "id": 2,
-    "name": "Woensel-Zuid",
-    "geoJsonBoundary": "{\"type\": \"Polygon\", \"coordinates\": [...]}",
-    "createdAt": "2026-02-15T10:00:00Z"
-  },
-  {
-    "id": 3,
-    "name": "Woensel-Noord",
-    "geoJsonBoundary": "{\"type\": \"Polygon\", \"coordinates\": [...]}",
-    "createdAt": "2026-02-15T10:00:00Z"
-  },
-  {
-    "id": 4,
-    "name": "Strijp",
-    "geoJsonBoundary": "{\"type\": \"Polygon\", \"coordinates\": [...]}",
-    "createdAt": "2026-02-15T10:00:00Z"
+    "geoJsonBoundary": "{\"type\":\"MultiPolygon\",...}",
+    "createdAt": "2026-04-07T10:00:00Z"
   }
 ]
 ```
 
-### Field Definitions
+### GET /api/districts/{id}
+Returns one district including quarters.
 
-| Field | Type | Description |
-|-------|------|-------------|
-| `id` | integer | Unique zone identifier |
-| `name` | string | Human-readable zone name (e.g., "Centrum", "Woensel-Zuid") |
-| `geoJsonBoundary` | string | GeoJSON polygon representing zone boundary (for Leaflet.js rendering) |
-| `createdAt` | ISO 8601 timestamp | When zone was added to system |
-
-### Notes
-
-- GeoJSON will be provided as a string; frontend must parse as JSON
-- All timestamps are in UTC
-- No pagination in Phase 1; all zones returned
-
----
-
-## 2. GET /api/zones/:id/mood
-
-### Description
-
-Returns the current mood prediction for a specific zone, including confidence score and feature vector used for prediction.
-
-### Request
-
-```bash
-GET /api/zones/1/mood
-```
-
-### Path Parameters
-
-| Parameter | Type | Required | Description |
-|-----------|------|----------|-------------|
-| `id` | integer | Yes | Zone ID |
-
-### Response (200 OK)
-
-**Content-Type:** `application/json`
+Response 200:
 
 ```json
 {
-  "zoneId": 1,
-  "zoneName": "Centrum",
-  "moodLabel": "Energetic",
-  "confidence": 0.85,
-  "timestamp": "2026-03-17T21:45:00Z"
+  "id": 1,
+  "name": "Centrum",
+  "geoJsonBoundary": "{\"type\":\"MultiPolygon\",...}",
+  "createdAt": "2026-04-07T10:00:00Z",
+  "quarters": [
+    {
+      "id": 1,
+      "name": "Centrum",
+      "districtId": 1,
+      "geoJsonBoundary": "{\"type\":\"MultiPolygon\",...}",
+      "createdAt": "2026-04-07T10:00:00Z"
+    }
+  ]
 }
 ```
 
-### Field Definitions
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `zoneId` | integer | Zone identifier |
-| `zoneName` | string | Human-readable zone name |
-| `moodLabel` | string | Predicted mood: `"Energetic"`, `"Intense"`, `"Busy"`, `"Relaxed"`, or `"Calm"` |
-| `confidence` | number | Confidence score (0.0 to 1.0) |
-| `timestamp` | ISO 8601 timestamp | When this prediction was generated |
-
-### Mood Label Reference
-
-| Mood Label | Description | Color (UI) |
-|-----------|-------------|-----------|
-| `Energetic` | High activity, many events, good weather | Pastel Yellow |
-| `Intense` | High-energy events, competitions, crowded | Orange |
-| `Busy` | Many concurrent events, peak traffic | Coral |
-| `Relaxed` | Few events, calm atmosphere | Sky Blue |
-| `Calm` | Minimal activity, quiet | Teal |
-
-### Response (404 Not Found)
+Response 404:
 
 ```json
 {
-  "message": "Zone 999 not found"
+  "message": "District 999 not found"
 }
 ```
 
-### Notes
+---
 
-- Predictions are updated every 15 minutes (Phase 2)
-- Phase 1 returns mock data with recent timestamp
-- Confidence reflects model certainty (higher is more confident)
+## 2) Quarters
+
+### GET /api/quarters?districtId={id}
+Returns all quarters, optionally filtered by districtId.
+
+Query params:
+- `districtId` optional integer
+
+Response 200:
+
+```json
+[
+  {
+    "id": 1,
+    "name": "Centrum",
+    "districtId": 1,
+    "geoJsonBoundary": "{\"type\":\"MultiPolygon\",...}",
+    "createdAt": "2026-04-07T10:00:00Z"
+  }
+]
+```
+
+### GET /api/quarters/{id}
+Returns one quarter including neighborhoods.
+
+Response 200:
+
+```json
+{
+  "id": 1,
+  "name": "Centrum",
+  "districtId": 1,
+  "geoJsonBoundary": "{\"type\":\"MultiPolygon\",...}",
+  "createdAt": "2026-04-07T10:00:00Z",
+  "neighborhoods": [
+    {
+      "id": 1,
+      "name": "Binnenstad",
+      "quarterId": 1,
+      "quarterName": "Centrum",
+      "geoJsonBoundary": "{\"type\":\"MultiPolygon\",...}",
+      "createdAt": "2026-04-07T10:00:00Z"
+    }
+  ]
+}
+```
+
+Response 404:
+
+```json
+{
+  "message": "Quarter 999 not found"
+}
+```
 
 ---
 
-## 3. GET /api/events/ticketmaster
+## 3) Neighborhoods
 
-### Description
+### GET /api/neighborhoods?quarterId={id}&districtId={id}
+Returns neighborhood metadata only (no mood data).
 
-Returns paginated events from Ticketmaster in-memory cache. Events sourced from last `POST /api/events/refresh` call. Sorted by start time (ascending).
+Query params:
+- `quarterId` optional integer
+- `districtId` optional integer
 
-### Request
+Response 200:
 
-```bash
-GET /api/events/ticketmaster?page=0&pageSize=20
+```json
+[
+  {
+    "id": 1,
+    "name": "Binnenstad",
+    "quarterId": 1,
+    "quarterName": "Centrum",
+    "geoJsonBoundary": "{\"type\":\"MultiPolygon\",...}",
+    "createdAt": "2026-04-07T10:00:00Z"
+  }
+]
 ```
 
-### Query Parameters
+### GET /api/neighborhoods/{id}
+Returns one neighborhood metadata record (no mood data).
 
-| Parameter | Type | Default | Description |
-|-----------|------|---------|-------------|
-| `page` | integer | 0 | Page number (0-indexed) |
-| `pageSize` | integer | 20 | Results per page (1-50) |
+Response 404:
 
-### Response (200 OK)
+```json
+{
+  "message": "Neighborhood 999 not found"
+}
+```
 
-**Content-Type:** `application/json`
+---
+
+## 4) Mood Forecasts (NeighborhoodSnapshot)
+
+### GET /api/mood/neighborhood/{neighborhoodId}
+Returns upcoming hourly snapshots for the next 24 hours for one neighborhood.
+
+Response 200:
+
+```json
+{
+  "neighborhoodId": 1,
+  "neighborhoodName": "Binnenstad",
+  "forecastStartUtc": "2026-04-07T15:00:00Z",
+  "forecastEndUtcExclusive": "2026-04-08T15:00:00Z",
+  "snapshots": [
+    {
+      "timestamp": "2026-04-07T15:00:00Z",
+      "moodLabel": "Busy",
+      "confidence": 0.8,
+      "features": {
+        "event_count": 3,
+        "hour_of_day": 15
+      }
+    }
+  ]
+}
+```
+
+Response 404:
+
+```json
+{
+  "error": "Neighborhood not found"
+}
+```
+
+### GET /api/mood/all
+Returns upcoming hourly snapshots for all neighborhoods.
+
+Response 200:
+
+```json
+{
+  "forecastStartUtc": "2026-04-07T15:00:00Z",
+  "forecastEndUtcExclusive": "2026-04-08T15:00:00Z",
+  "neighborhoods": [
+    {
+      "neighborhoodId": 1,
+      "neighborhoodName": "Binnenstad",
+      "forecastStartUtc": "2026-04-07T15:00:00Z",
+      "forecastEndUtcExclusive": "2026-04-08T15:00:00Z",
+      "snapshots": [
+        {
+          "timestamp": "2026-04-07T15:00:00Z",
+          "moodLabel": "Busy",
+          "confidence": 0.8,
+          "features": {}
+        }
+      ]
+    }
+  ]
+}
+```
+
+### GET /api/mood/neighborhood/{neighborhoodId}/snapshot?timestamp={ISO8601}
+Returns one exact snapshot at timestamp.
+
+Query params:
+- `timestamp` required DateTime (ISO-8601). Timestamp is normalized to UTC in controller logic.
+
+Response 200:
+
+```json
+{
+  "timestamp": "2026-04-07T15:00:00Z",
+  "moodLabel": "Busy",
+  "confidence": 0.8,
+  "features": {
+    "event_count": 3
+  }
+}
+```
+
+Response 400:
+
+```json
+{
+  "error": "Query parameter 'timestamp' is required (ISO-8601 format, UTC recommended)."
+}
+```
+
+Response 404:
+
+```json
+{
+  "error": "No mood snapshot found for this neighborhood at the requested timestamp",
+  "neighborhoodId": 1,
+  "timestamp": "2026-04-07T15:00:00Z"
+}
+```
+
+---
+
+## 5) Events
+
+### GET /api/events
+Returns paginated events for next 24 hours (`StartTime >= now && StartTime <= now+24h`).
+
+Query params:
+- `page` default `0`, must be `>= 0`
+- `pageSize` default `20`, range `1..50`
+- `neighborhoodId` optional integer
+- `category` optional string (currently accepted but not applied in DB query)
+
+Response 200:
 
 ```json
 {
   "data": [
     {
       "id": 1,
-      "title": "Derek Ogilvie - Up Close and Personal",
+      "title": "Example Event",
       "source": "Ticketmaster",
-      "startTime": "2026-04-03T11:30:00Z",
+      "startTime": "2026-04-07T18:00:00Z",
       "endTime": null,
-      "category": "Miscellaneous",
-      "url": "https://www.ticketmaster.nl/event/derek-ogilvie-up-close-and-personal-tickets/399246674",
-      "latitude": 51.44466,
-      "longitude": 5.47564
-    },
-    {
-      "id": 2,
-      "title": "Magic Men: World Tour 2026",
-      "source": "Ticketmaster",
-      "startTime": "2026-06-06T18:00:00Z",
-      "endTime": null,
-      "category": "Music",
-      "url": "https://www.ticketmaster.nl/event/magic-men-world-tour-2026-tickets/1243385837",
-      "latitude": 51.41285,
-      "longitude": 5.48132
+      "url": null,
+      "latitude": null,
+      "longitude": null,
+      "neighborhoodId": null
     }
   ],
   "pagination": {
     "page": 0,
     "pageSize": 20,
     "totalPages": 1,
-    "totalItems": 5
+    "totalItems": 1
   }
 }
 ```
 
-### EventResponse Field Definitions
-
-| Field | Type | Nullable | Description |
-|-------|------|----------|-------------|
-| `id` | integer | No | Internal cache ID (parsed from Ticketmaster event ID) |
-| `title` | string | No | Event name |
-| `source` | string | No | Always `"Ticketmaster"` (Phase 1) |
-| `startTime` | ISO 8601 | No | Event start time (UTC) |
-| `endTime` | ISO 8601 | Yes | Event end time (UTC), null if not provided by API |
-| `category` | string | No | Classification segment (e.g., "Music", "Sports", "Miscellaneous") |
-| `url` | string | Yes | Ticketmaster event page URL |
-| `latitude` | double | Yes | Venue latitude (may be null if venue data incomplete) |
-| `longitude` | double | Yes | Venue longitude (may be null if venue data incomplete) |
-
-### Response (400 Bad Request)
+Response 400 examples:
 
 ```json
-{
-  "error": "pageSize must be between 1 and 50"
-}
+{ "error": "pageSize must be between 1 and 50" }
 ```
-
-### Response (200 OK - Empty List)
 
 ```json
-{
-  "data": [],
-  "pagination": {
-    "page": 0,
-    "pageSize": 20,
-    "totalPages": 0,
-    "totalItems": 0
-  }
-}
+{ "error": "page must be >= 0" }
 ```
 
-### Notes
+### GET /api/events/{id}
+Returns one event by database ID.
 
-- **Typical cache size**: ~5 events for 24-hour Eindhoven search (Ticketmaster API limitation)
-- **Cache source**: Updated by `POST /api/events/refresh` call
-- **All timestamps**: UTC
-- **Sort order**: By startTime ascending (earliest first)
-- **Phase 1 limitation**: No zone assignment yet; Phase 2 will add geospatial mapping
-- **Coordinate handling**: Some venues lack geo-coordinates in Ticketmaster data; frontend must handle nullable lat/lon
+Response 404:
 
----
-
-## 4. POST /api/events/refresh
-
-### Description
-
-Manually trigger a Ticketmaster poll. Fetches events for Eindhoven (next 24 hours) and updates in-memory cache. Intended for cron/background service Phase 2; can be called manually for testing.
-
-### Request
-
-```bash
-POST /api/events/refresh
+```json
+{ "error": "Event '999' not found" }
 ```
 
-### Response (200 OK)
+### POST /api/events/refresh (non-production only)
+Triggers Ticketmaster poll and updates database cache.
 
-**Content-Type:** `application/json`
+Response 200:
 
 ```json
 {
   "message": "Ticketmaster poll completed",
   "cachedCount": 5,
-  "timestamp": "2026-03-27T14:30:00Z"
+  "timestamp": "2026-04-07T14:00:00Z"
 }
 ```
-
-### Response (500 Internal Server Error)
-
-```json
-{
-  "error": "Failed to poll Ticketmaster",
-  "details": "HTTP 401: Unauthorized - check API key in environment variables"
-}
-```
-
-### Field Definitions
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `message` | string | Status message |
-| `cachedCount` | integer | Total events now in memory cache (typically ~5 for Eindhoven) |
-| `timestamp` | ISO 8601 | When poll completed (UTC) |
-| `error` | string | Error message (only on failure) |
-| `details` | string | Additional error details |
-
-### Ticketmaster Query Parameters (Fixed, Non-Configurable)
-
-These parameters are hardcoded in the service; shown here for transparency:
-
-| Parameter | Value | Description |
-|-----------|-------|-------------|
-| `apikey` | From config | Ticketmaster Discovery API key |
-| `city` | `Eindhoven` | City name (not latitude/longitude) |
-| `size` | `50` | Max events per page |
-| `page` | `0` | First page (auto-fetches all pages if >1) |
-| `startDateTime` | Now (UTC) | Search window start |
-| `endDateTime` | Now + 24h (UTC) | Search window end |
-| `includeTBA` | `yes` | Include "To Be Announced" events |
-| `includeTBD` | `yes` | Include "To Be Determined" events |
-
-### Response Codes
-
-| Code | Meaning | Example |
-|------|---------|---------|
-| 200 | Success | Poll completed, cache updated |
-| 500 | Error | API key missing, network error, JSON parse error |
-
-### Notes
-
-- **Ticketmaster API limitation**: Returns ~5 events for 24-hour Eindhoven search (free tier constraint)
-- **Rate limiting**: Ticketmaster allows 5 requests/second and 5,000/day; service adds 300ms delays between pages
-- **Cache type**: In-memory only (Phase 1); persists across requests but lost on app restart
-- **No pagination on input**: Service fetches all available pages automatically; max 20 pages per poll (Ticketmaster limit)
-- **Error handling**: Network errors and JSON parsing errors return 500; check logs for details
 
 ---
 
-## 5. GET /api/weather
+## 6) Weather
 
-### Description
+### GET /api/weather
+Returns all cached weather rows sorted by `snapshotHour`.
 
-Returns all cached hourly weather forecasts for Eindhoven. Data sourced from Open-Meteo API (free, no key required). Cache updated every 15 minutes by background service.
-
-**Data source:** [Open-Meteo](https://open-meteo.com) Free Weather API  
-**Update frequency:** Every 15 minutes (background service)  
-**Coverage:** Eindhoven (51.4416°N, 5.4699°E)  
-**Forecast window:** Next day, 1-hour resolution
-
-### Request
-
-```bash
-GET /api/weather
-```
-
-### Response (200 OK)
-
-**Content-Type:** `application/json`
+Response 200:
 
 ```json
 [
   {
-    "id": 1,
-    "snapshotHour": "2026-03-28T14:00:00Z",
-    "temperatureC": 12.3,
-    "precipitationProbability": 25,
-    "cloudCover": 65,
-    "cachedAt": "2026-03-28T13:58:00Z"
-  },
-  {
-    "id": 2,
-    "snapshotHour": "2026-03-28T15:00:00Z",
-    "temperatureC": 13.1,
-    "precipitationProbability": 20,
+    "snapshotHour": "2026-04-07T15:00:00Z",
+    "temperatureC": 14.2,
+    "precipitationProbability": 30,
     "cloudCover": 70,
-    "cachedAt": "2026-03-28T13:58:00Z"
+    "cachedAt": "2026-04-07T14:00:00Z"
   }
 ]
 ```
 
-### Field Definitions
+### GET /api/weather/hour?timestamp={ISO8601}
+Returns weather at exact normalized hour.
 
-| Field | Type | Nullable | Description |
-|-------|------|----------|-------------|
-| `id` | integer | No | Internal cache row ID |
-| `snapshotHour` | ISO 8601 | No | Hour timestamp (UTC, rounded to nearest hour) |
-| `temperatureC` | double | No | Temperature in Celsius (2m above ground) |
-| `precipitationProbability` | integer | No | Probability of precipitation (0–100 %) |
-| `cloudCover` | integer | No | Cloud cover percentage (0–100 %) |
-| `cachedAt` | ISO 8601 | No | When this record was cached (UTC) |
+Response 404:
 
-### Notes
+```json
+{ "error": "No weather data for requested hour" }
+```
 
-- All timestamps are in UTC
-- Returned in ascending order by `snapshotHour`
-- Cache is in-memory; persists across requests, lost on app restart
-- Typical cache size: ~24 records (1 day × 24 hours)
+### POST /api/weather/fetch (non-production only)
+Manually fetches Open-Meteo and replaces weather cache table content.
 
-### Response (500 Internal Server Error)
+Response 200: array of weather rows.
+
+### DELETE /api/weather/cache?olderThanDays=1
+Deletes old weather rows older than threshold.
+
+Response 200:
 
 ```json
 {
-  "error": "Error retrieving weather data"
+  "message": "Cache cleared (older than 1 days). 24 records remain."
 }
 ```
 
 ---
 
-## 6. GET /api/weather/hour
+## 7) Holidays
 
-### Description
+### GET /api/holidays
+Returns Dutch public holidays for 2026 from Nager.Date (cached in service).
 
-Retrieve weather for a specific hour from cache. Matches to nearest hour in cache (ignores minutes/seconds).
-
-### Request
-
-```bash
-GET /api/weather/hour?timestamp=2026-03-28T14:30:00Z
-```
-
-### Query Parameters
-
-| Parameter | Type | Required | Description |
-|-----------|------|----------|-------------|
-| `timestamp` | ISO 8601 | Yes | Hour to retrieve. Will match to nearest hour in cache (e.g., `14:30:00Z` → `14:00:00Z`) |
-
-### Response (200 OK)
-
-**Content-Type:** `application/json`
-
-```json
-{
-  "id": 1,
-  "snapshotHour": "2026-03-28T14:00:00Z",
-  "temperatureC": 12.3,
-  "precipitationProbability": 25,
-  "cloudCover": 65,
-  "cachedAt": "2026-03-28T13:58:00Z"
-}
-```
-
-### Response (404 Not Found)
-
-```json
-{
-  "error": "No weather data for requested hour"
-}
-```
-
-Hour is not in cache (cache older than 1 day, or hour is in the past).
-
-### Response (500 Internal Server Error)
-
-```json
-{
-  "error": "Error retrieving weather data"
-}
-```
-
----
-
-## 7. POST /api/weather/fetch
-
-### Description
-
-Manually trigger a weather fetch from Open-Meteo API. Normally called by background service every 15 minutes. Useful for testing or forcing manual updates.
-
-### Request
-
-```bash
-POST /api/weather/fetch
-```
-
-### Response (200 OK)
-
-**Content-Type:** `application/json`
+Response 200:
 
 ```json
 [
   {
-    "id": 1,
-    "snapshotHour": "2026-03-28T14:00:00Z",
-    "temperatureC": 12.3,
-    "precipitationProbability": 25,
-    "cloudCover": 65,
-    "cachedAt": "2026-03-28T13:58:15Z"
-  },
-  {
-    "id": 2,
-    "snapshotHour": "2026-03-28T15:00:00Z",
-    "temperatureC": 13.1,
-    "precipitationProbability": 20,
-    "cloudCover": 70,
-    "cachedAt": "2026-03-28T13:58:15Z"
+    "date": "2026-01-01T00:00:00",
+    "localName": "Nieuwjaarsdag",
+    "name": "New Year's Day"
   }
 ]
 ```
 
-### Response (500 Internal Server Error)
+---
+
+## 8) PSV Matches
+
+### GET /api/psvmatches
+Returns upcoming/live PSV matches parsed from football-data.org.
+
+Response 200:
 
 ```json
-{
-  "error": "Error fetching weather data from external API"
-}
+[
+  {
+    "matchDate": "2026-04-12T14:30:00Z",
+    "homeAway": "HOME",
+    "status": "SCHEDULED",
+    "kickOffTime": "2026-04-12T14:30:00Z",
+    "opponent": "Ajax"
+  }
+]
 ```
-
-Network error, OpenMeteo API unreachable, or JSON parsing error.
-
-### Notes
-
-- Returns newly fetched records (1-day forecast)
-- Replaces entire cache on each call
-- No rate limiting on client side; Open-Meteo API allows unlimited free calls
-- Response is list of all cached records after fetch is complete
 
 ---
 
-## 8. DELETE /api/weather/cache
+## 9) Metadata / Transparency
 
-### Description
+### GET /api/meta
+Returns transparency payload used by frontend information panel.
 
-Remove old weather records from cache (older than specified days). Reduces memory footprint for long-running apps.
-
-### Request
-
-```bash
-DELETE /api/weather/cache?olderThanDays=1
-```
-
-### Query Parameters
-
-| Parameter | Type | Default | Description |
-|-----------|------|---------|-------------|
-| `olderThanDays` | integer | 1 | Age threshold in days |
-
-### Response (200 OK)
-
-**Content-Type:** `application/json`
-
-```json
-{
-  "message": "Cache cleared (older than 1 day). 42 records remain."
-}
-```
-
-### Response (500 Internal Server Error)
-
-```json
-{
-  "error": "Error clearing cache"
-}
-```
-
-### Notes
-
-- Operates on in-memory cache only
-- Returns count of remaining records after deletion
-- Safe to call multiple times (idempotent)
+Response 200 fields:
+- `modelDescription`
+- `moodLabels` (map)
+- `dataSourcesUsed` (list)
+- `knownLimitations`
+- `confidenceScoreExplanation`
+- `featureExplanations` (map)
 
 ---
 
-## Error Handling
+## 10) Venue Scraper
 
-All endpoints may return these error responses:
+### POST /api/scraper/venues (non-production only)
+Manual trigger for Uit in Eindhoven scraper.
 
-### 400 Bad Request
+Response 200:
 
 ```json
 {
-  "message": "Invalid query parameters",
-  "errors": ["limit must be between 1 and 1000"]
+  "success": true,
+  "message": "Scraping completed successfully",
+  "eventsCount": 120,
+  "timestamp": "2026-04-07T14:00:00Z"
 }
 ```
 
-### 404 Not Found
+Response 500:
 
 ```json
 {
-  "message": "Resource not found"
-}
-```
-
-### 500 Internal Server Error
-
-```json
-{
-  "message": "Internal server error",
-  "traceId": "0HN1GKOFP6M61:00000001"
+  "success": false,
+  "message": "Scraping failed: ...",
+  "timestamp": "2026-04-07T14:00:00Z"
 }
 ```
 
 ---
 
-## CORS Headers
+## Notes
 
-All endpoints support CORS for requests from:
-
-- `http://localhost:3000` (Next.js development server)
-- Production: `https://moodradar-frontend.render.com`
-
----
-
-## Rate Limiting (Phase 2)
-
-Will implement rate limiting:
-
-- Public endpoints: 100 requests per minute per IP
-- Authenticated clients: 1000 requests per minute
-
----
-
-## Typography
-
-**Timestamp Format:** ISO 8601 (e.g., `2026-03-17T21:45:32.123Z`)
-
-**Confidence Format:** Decimal 0.0–1.0
-
-**Boolean Format:** JSON `true`/`false`
-
----
-
-## Implementation Notes for Frontend
-
-### Parsing GeoJSON Boundaries
-
-```javascript
-const boundary = JSON.parse(zone.geoJsonBoundary);
-// Use with Leaflet.js:
-// L.geoJSON(boundary).addTo(map);
-```
-
-### Mood Color Mapping
-
-```javascript
-const moodColors = {
-  "Energetic": "#FFFACD",  // Pastel Yellow
-  "Intense": "#FFB347",    // Orange
-  "Busy": "#FF7F50",        // Coral
-  "Relaxed": "#87CEEB",     // Sky Blue
-  "Calm": "#20B2AA"         // Teal
-};
-```
-
-### Confidence Display
-
-Show as percentage: `(confidence * 100).toFixed(0) + "%"`
-
----
-
-## Version History
-
-| Version | Date | Changes |
-|---------|------|---------|
-| 2.1 | 2026-03-28 | Added weather endpoints (GET /api/weather, GET /api/weather/hour, POST /api/weather/fetch, DELETE /api/weather/cache) sourced from Open-Meteo API; background service now polls weather every 15 min |
-| 2.0 | 2026-03-27 | Updated to Ticketmaster Discovery API v2 (live); removed mock data; added coverage limitations |
-| 1.1 | 2026-03-17 | Added pagination, filtering by zone/category (planned) |
-| 1.0 | 2026-03-17 | Initial Phase 1 contracts with mock data |
-
----
-
-**Last Updated:** 2026-03-29  
-**Owner:** Backend Team  
-**Status:** Phase 1 Development (Live with Ticketmaster Discovery API v2 + PostgreSQL Persistence)  
-
-**Setup Guide:** See [POSTGRESQL_SETUP.md](../POSTGRESQL_SETUP.md) for local development environment setup.
-
-**Important**: All Ticketmaster endpoints return live data from free tier API. Event coverage is sparse (~2 events per 10 days for Eindhoven). See [ticketmaster_api_audit.md](../docs/ticketmaster_api_audit.md) for detailed limitations, causes, and Phase 2+ mitigation strategies.
+- Swagger is enabled by current Program.cs setup.
+- Timestamps are handled as UTC in forecast logic and snapshot lookup.
+- Event category exists in query parameter but is not currently applied in events query.
+- Legacy `/api/zones` contracts are obsolete and not implemented in current controllers.
