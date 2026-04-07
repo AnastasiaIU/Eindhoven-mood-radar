@@ -1,6 +1,7 @@
 using Microsoft.AspNetCore.Mvc;
 using MoodRadar.API.Services;
 using MoodRadar.API.Models.Domain;
+using MoodRadar.API.Utilities;
 
 namespace MoodRadar.API.Controllers;
 
@@ -91,6 +92,7 @@ public class WeatherController : ControllerBase
     /// Response: Array of newly fetched Weather objects.
     /// </summary>
     [HttpPost("fetch")]
+    [NonProductionOnly]
     public async Task<ActionResult<IEnumerable<Weather>>> FetchWeather(CancellationToken cancellationToken)
     {
         try

@@ -1,247 +1,144 @@
 # MoodRadar Backend API
 
-Phase 1 REST API for the Eindhoven Mood Radar project. Built with C# ASP.NET Core.
+Backend API for Eindhoven Mood Radar, built with ASP.NET Core 8 and PostgreSQL.
 
-## Overview
+## Current Status
 
-This is the backend API server that provides:
+This codebase is no longer on the old zones-only mock API.
+It currently exposes district, quarter, neighborhood, mood forecast, events, weather, holidays, PSV matches, metadata, and scraper endpoints.
 
-- Zone (district) data for Eindhoven
-- Real-time mood predictions for each zone
-- Event data from multiple sources (Eventbrite, Ticketmaster, PSV, etc.)
+- Framework: .NET 8 (ASP.NET Core)
+- ORM: Entity Framework Core + Npgsql
+- Database: PostgreSQL
+- Scheduled pipeline: every 15 minutes via hosted service
 
-**Status:** Phase 1 Development (Mock Data)  
-**Framework:** C# with ASP.NET Core 8.0 (LTS)  
-**Database:** PostgreSQL
+## Prerequisites
 
-## Getting Started
+- .NET 8 SDK
+- PostgreSQL (local install or Docker)
 
-### Prerequisites
+## Local Configuration
 
-- .NET 8.0 SDK or later ([download](https://dotnet.microsoft.com/download))
-- Git
-
-### Installation
-
-1. Clone or navigate to the project:
-
-    ```bash
-    cd \moonshot-backend\MoodRadar.API
-    ```
-
-2. Restore dependencies:
-
-    ```bash
-    dotnet restore
-    ```
-
-3. Build the project:
-
-    ```bash
-    dotnet build
-    ```
-
-### Running Locally
-
-**Development Mode:**
-
-```bash
-dotnet run
-```
-
-The API will start at:
-
-- HTTP: `http://localhost:5000`
-- HTTPS: `https://localhost:5001` (requires dev certificate; auto-generated on first run)
-
-## API Endpoints
-
-All endpoints return mock data in Phase 1.
-
-### 1. Get All Zones
-
-```bash
-GET /api/zones
-```
-
-Returns list of all Eindhoven zones with boundaries.
-
-**Example Response:**
-
-```json
-[
-  {
-    "id": 1,
-    "name": "Centrum",
-    "geoJsonBoundary": "{...}",
-    "createdAt": "2026-02-15T10:00:00Z"
-  }
-]
-```
-
-### 2. Get Zone Mood
-
-```bash
-GET /api/zones/{id}/mood
-```
-
-Returns current mood prediction for a zone.
-
-**Example Response:**
+Update connection settings in [appsettings.Development.json](appsettings.Development.json):
 
 ```json
 {
-  "zoneId": 1,
-  "zoneName": "Centrum",
-  "moodLabel": "Energetic",
-  "confidence": 0.85,
-  "timestamp": "2026-03-17T21:45:00Z"
+  "ConnectionStrings": {
+    "PostgreSQL": "Host=localhost;Port=5432;Database=moodradar_dev;Username=postgres;Password=postgres"
+  }
 }
 ```
 
-**Mood Labels:** Energetic, Intense, Busy, Relaxed, Calm
+Optional API keys:
 
-### 3. Get All Events
+- `Ticketmaster:ApiKey`
+- `FootballApi:ApiKey`
 
-```bash
-GET /api/events
-```
-
-Returns all upcoming events across Eindhoven.
-
-**Example Response:**
-
-```json
-[
-  {
-    "id": 1,
-    "title": "Tech Conference 2026",
-    "source": "Eventbrite",
-    "startTime": "2026-03-17T23:00:00Z",
-    "endTime": "2026-03-18T05:00:00Z",
-    "category": "Conference",
-    "url": "https://eventbrite.com/e/tech-conference"
-  }
-]
-```
-
-See [`/docs/api-contracts.md`](../docs/api-contracts.md) for complete API documentation.
-
-## Project Structure
+## Run Locally
 
 ```bash
-MoodRadar.API/
-├── Controllers/
-│   ├── ZonesController.cs          # GET /api/zones, GET /api/zones/:id/mood
-│   ├── EventsController.cs         # GET /api/events
-│   └── WeatherController.cs # TODO: Replace with Open-Meteo connector
-├── Models/
-│   ├── Zone.cs                 # Zone entity
-│   ├── ZoneSnapshot.cs         # Mood prediction snapshot
-│   ├── Event.cs                # Event entity
-│   └── Weather.cs              # Weather forecast (Phase 1 mock, Phase 2: Open-Meteo)
-├── Services/
-│   └── MockDataService.cs      # Phase 1: Returns mock data
-├── Program.cs                  # Application setup
-├── appsettings.json            # Configuration
-└── MoodRadar.API.csproj        # Project file
+cd moonshot-backend/MoodRadar.API
+dotnet restore
+dotnet build
+dotnet run --environment Development
 ```
 
-### CORS
+On startup in Development:
 
-Frontend origins allowed (configured in `Program.cs`):
+- Migrations are applied.
+- Core table existence is validated.
+- If migration chain is broken, development fallback rebuilds schema.
+- Database seeding runs.
 
-- `http://localhost:3000` (Next.js dev)
+## API Endpoint Overview
 
-## Development Notes
+### Geography
 
-### Phase 1 (Current)
+- `GET /api/districts`
+- `GET /api/districts/{id}`
+- `GET /api/quarters?districtId={id}`
+- `GET /api/quarters/{id}`
+- `GET /api/neighborhoods?quarterId={id}&districtId={id}`
+- `GET /api/neighborhoods/{id}`
 
-- Returns hardcoded mock data
-- All endpoints functional with placeholder responses
-- Focus: API contract stability for frontend development
+### Mood Forecast (NeighborhoodSnapshot-based)
 
-### Phase 2 (Next)
+- `GET /api/mood/neighborhood/{neighborhoodId}`
+  - Returns upcoming hourly snapshots for next 24h.
+- `GET /api/mood/all`
+  - Returns upcoming hourly snapshots for next 24h for all neighborhoods.
+- `GET /api/mood/neighborhood/{neighborhoodId}/snapshot?timestamp={ISO8601}`
+  - Returns exact snapshot at timestamp.
 
-- Replace `IMockDataService` with `IDataService` backed by PostgreSQL
-- Integrate external API connectors:
-  - Eventbrite API
-  - Ticketmaster Discovery API
-  - football-data.org (PSV matches)
-  - Open-Meteo (weather)
-  - Nager.Date (Dutch holidays)
-- Integrate ML service for real mood predictions
-- Implement cron job for 15-minute refresh
+### Events
 
-## Testing
+- `GET /api/events?page=0&pageSize=20&neighborhoodId={id}`
+- `GET /api/events/{id}`
+- `POST /api/events/refresh` (non-production only)
 
-For now, test endpoints with cURL or Postman:
+Notes:
 
-1. Start the server: `dotnet run`
-2. Try endpoints using cURL:
+- Events endpoint returns next 24h window.
+- `category` query parameter is accepted by code but currently not applied in query filtering.
+- Event DTO currently does not expose a category field.
 
-    ```bash
-    # Get all zones
-    curl http://localhost:5000/api/zones
+### Weather
 
-    # Get mood for zone 1
-    curl http://localhost:5000/api/zones/1/mood
+- `GET /api/weather`
+- `GET /api/weather/hour?timestamp={ISO8601}`
+- `POST /api/weather/fetch` (non-production only)
+- `DELETE /api/weather/cache?olderThanDays=1`
 
-    # Get all events
-    curl http://localhost:5000/api/events
-    ```
+### Other
 
-## Deployment
+- `GET /api/holidays`
+- `GET /api/psvmatches`
+- `GET /api/meta`
+- `POST /api/scraper/venues` (non-production only)
 
-### Render.com (Phase 2)
+## Non-Production Endpoints
 
-1. Connect GitHub repository
-2. Configure build command:
+The following routes are blocked in Production by `NonProductionOnlyAttribute` and return `403`:
 
-    ```bash
-    dotnet build --configuration Release
-    ```
+- `POST /api/events/refresh`
+- `POST /api/weather/fetch`
+- `POST /api/scraper/venues`
 
-3. Configure start command:
+## Background Pipeline
 
-    ```bash
-    dotnet MoodRadar.API.dll
-    ```
+Hosted service: `MoodUpdateService`
 
-Environment variables:
+- Runs immediately on startup, then every 15 minutes.
+- Polls Ticketmaster.
+- Fetches weather.
+- Fetches PSV matches.
+- Fetches holidays.
+- Generates 24-hour hourly neighborhood mood snapshots.
+- Venue scraping runs once per 24 hours, but is disabled in Development.
 
-- `ASPNETCORE_ENVIRONMENT=Production` - Disables development features (like Swagger), enables proper error handling and logging
-- `ConnectionString=` (PostgreSQL, Phase 2)
-- API keys for external services (Phase 2)
+## Web Scraping
 
-## Logging
+Manual endpoint:
 
-Logs are configured in `appsettings.json`. By default, Information level logs are shown.
+- `POST /api/scraper/venues`
 
-Controllers log:
+Current scraper source:
 
-- Request entry points (e.g., "Fetching all zones")
-- Not found conditions (404)
+- Uit in Eindhoven agenda (`uitineindhoven.nl/agenda`)
 
-## Technical Decisions
+The scraper stores events in `Events` and attempts coordinate and neighborhood mapping when detail-page data is available.
 
-1. **Mock Data Service Pattern:** Allows for easy replacement with real DB queries in Phase 2
-2. **Dependency Injection:** Used for services, enabling testability
-3. **CORS Enabled:** Frontend can develop independently
+## CORS
 
-## Links
+CORS policy is configured in `Program.cs`.
+In Development it allows:
 
-- [API Contracts](/docs/api-contracts.md) - Complete endpoint specification
+- `http://localhost:3000`
 
-## Support
+## Where To Find Full Contracts
 
-For issues or questions:
+For request and response examples, see:
 
-1. Check the API Contracts documentation
-2. Test endpoints with cURL or Postman
-3. Contact backend team
-
----
-
-**Version:** 1.0 (Phase 1)  
-**Last Updated:** 2026-03-19
+- [../docs/api-contracts.md](../docs/api-contracts.md)
+- [../docs/ticketmaster_api_audit.md](../docs/ticketmaster_api_audit.md)
+- [../POSTGRESQL_SETUP.md](../POSTGRESQL_SETUP.md)

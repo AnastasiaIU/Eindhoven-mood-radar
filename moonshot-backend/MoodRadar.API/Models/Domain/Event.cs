@@ -42,12 +42,6 @@ public class Event
     public int? NeighborhoodId { get; set; }
     
     /// <summary>
-    /// Event category: "music", "sports", "arts", "theatre", "family", etc.
-    /// Used for filtering and mood modulation.
-    /// </summary>
-    public string Category { get; set; } = string.Empty;
-    
-    /// <summary>
     /// Long-form event description from API.
     /// </summary>
     public string? Description { get; set; }

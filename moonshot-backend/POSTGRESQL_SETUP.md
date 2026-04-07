@@ -1,115 +1,100 @@
 # PostgreSQL Setup Guide
 
-**For:** Local development and testing  
+For local development and testing of MoodRadar backend.
 
 ---
 
 ## Quick Setup
 
-### Option 1: Local PostgreSQL Installation (Recommended for Windows)
+### Option 1: Local PostgreSQL (Windows)
 
-1. **Download & Install**
-   - Visit https://www.postgresql.org/download/windows/
-   - Run the installer, set password to `postgres`
-   - Accept all defaults
+1. Install PostgreSQL from https://www.postgresql.org/download/windows/
+2. During setup, set user password (example: `postgres`)
+3. Verify:
 
-2. **Verify Installation**
+```bash
+psql --version
+```
 
-   ```bash
-   psql --version
-   ```
+### Option 2: Docker
 
-### Option 2: Docker (Linux/Mac friendly)
+```bash
+docker run --name mood-radar-db -e POSTGRES_PASSWORD=postgres -e POSTGRES_DB=moodradar_dev -p 5432:5432 -d postgres:15
+```
 
-1. **Run once**
+Start existing container later:
 
-   ```bash
-   docker run --name mood-radar-db \
-     -e POSTGRES_PASSWORD=postgres \
-     -e POSTGRES_DB=moodradar_dev \
-     -p 5432:5432 \
-     -d postgres:15
-   ```
-
-2. **Future starts**
-
-   ```bash
-   docker start mood-radar-db
-   ```
+```bash
+docker start mood-radar-db
+```
 
 ---
 
-## Database Configuration
+## Backend Connection Configuration
 
-Edit [appsettings.Development.json](MoodRadar.API/appsettings.Development.json):
+Edit [MoodRadar.API/appsettings.Development.json](MoodRadar.API/appsettings.Development.json):
 
 ```json
 {
   "ConnectionStrings": {
-    "DefaultConnection": "Host=localhost;Port=5432;Database=moodradar_dev;Username=postgres;Password=postgres"
+    "PostgreSQL": "Host=localhost;Port=5432;Database=moodradar_dev;Username=postgres;Password=postgres"
   }
 }
 ```
 
-**Connection Details:**
-
-- Host: `localhost`
-- Port: `5432`
-- Database: `moodradar_dev`
-- User: `postgres`
-- Password: `postgres`
+Important: the key name must be `PostgreSQL` because `Program.cs` reads `GetConnectionString("PostgreSQL")`.
 
 ---
 
-## Starting the Backend
+## Start Backend
 
 ```bash
 cd moonshot-backend/MoodRadar.API
 dotnet run --environment Development
 ```
 
-**Expected Output:**
-```
-Applying database migrations...
-✓ Migrations applied successfully
-Running database seeder...
-✓ Seeded 7 districts
-✓ Seeded 19 quarters
-✓ Seeded 110+ neighborhoods
-✓ Seeded 110+ neighborhood snapshots with mood predictions
-✓ Database seeding completed successfully!
-...
-Now listening on: http://localhost:5000
-```
+Development startup behavior:
+
+- Applies migrations.
+- Verifies core tables exist.
+- If migration chain is inconsistent, performs development fallback schema rebuild.
+- Runs database seeding.
 
 ---
 
-## Testing an Endpoint
+## Quick API Checks
 
 ```bash
-# Get all neighborhoods with current mood
-curl http://localhost:5000/api/neighborhoods | python -m json.tool
-```
+# District list
+curl http://localhost:5000/api/districts
 
-**Expected Response:**
-```json
-[
-  {
-    "id": 1,
-    "name": "Binnenstad",
-    "currentMood": "Busy",
-    "confidence": 0.76,
-    "lastMoodUpdate": "2026-03-29T18:33:57.253288Z"
-  },
-  ...
-]
+# Neighborhood list (metadata only)
+curl "http://localhost:5000/api/neighborhoods?districtId=1"
+
+# Mood forecast for one neighborhood (next 24h hourly snapshots)
+curl http://localhost:5000/api/mood/neighborhood/1
+
+# Exact snapshot by timestamp (ISO-8601)
+curl "http://localhost:5000/api/mood/neighborhood/1/snapshot?timestamp=2026-04-07T15:00:00Z"
+
+# Events (next 24h)
+curl "http://localhost:5000/api/events?page=0&pageSize=20"
+
+# Weather cache
+curl http://localhost:5000/api/weather
 ```
 
 ---
 
-## More Endpoints
+## Non-Production Test Endpoints
 
-Refer to [api-contracts.md](docs/api-contracts.md) for complete API documentation.
+The following endpoints are blocked in Production by `NonProductionOnlyAttribute`:
+
+- `POST /api/events/refresh`
+- `POST /api/weather/fetch`
+- `POST /api/scraper/venues`
+
+In Development, they are available for manual testing.
 
 ---
 
@@ -117,10 +102,15 @@ Refer to [api-contracts.md](docs/api-contracts.md) for complete API documentatio
 
 | Problem | Solution |
 |---------|----------|
-| "Could not connect to server" | Ensure PostgreSQL/Docker is running |
-| "Database moodradar_dev does not exist" | App auto-creates it on first run |
-| "Migrations failed" | Run `dotnet ef database drop`, then restart app |
+| Could not connect to PostgreSQL | Ensure local service or Docker container is running |
+| Connection string not found | Ensure `ConnectionStrings.PostgreSQL` exists in appsettings/environment |
+| `42P01: relation "Districts" does not exist` | Run in Development. Startup has schema fallback rebuild if core tables are missing |
+| Migrations failed on local dev DB | Stop app, drop dev DB, rerun app in Development to recreate schema + seed |
 
 ---
 
-**Questions?** Check [api-contracts.md](docs/api-contracts.md) or ask the backend team.
+## Related Docs
+
+- [docs/api-contracts.md](docs/api-contracts.md)
+- [docs/ticketmaster_api_audit.md](docs/ticketmaster_api_audit.md)
+- [MoodRadar.API/README.md](MoodRadar.API/README.md)

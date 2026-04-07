@@ -4,7 +4,7 @@ using System.Text.Json.Serialization;
 
 /// <summary>
 /// Response DTO for GET /api/neighborhoods endpoint.
-/// Returns neighborhood info with current mood.
+/// Returns neighborhood metadata only.
 /// </summary>
 public class NeighborhoodResponseDto
 {
@@ -25,13 +25,4 @@ public class NeighborhoodResponseDto
 
     [JsonPropertyName("createdAt")]
     public DateTime CreatedAt { get; set; }
-
-    [JsonPropertyName("currentMood")]
-    public string? CurrentMood { get; set; }
-
-    [JsonPropertyName("confidence")]
-    public double? Confidence { get; set; }
-
-    [JsonPropertyName("lastMoodUpdate")]
-    public DateTime? LastMoodUpdate { get; set; }
 }

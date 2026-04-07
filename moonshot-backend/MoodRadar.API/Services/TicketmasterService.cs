@@ -141,7 +141,6 @@ public class TicketmasterService : ITicketmasterService
                             Title = te.Name,
                             StartTime = te.Dates?.Start?.DateTime ?? DateTime.UtcNow,
                             EndTime = te.Dates?.End?.DateTime,
-                            Category = te.Classifications.FirstOrDefault()?.Segment?.Name ?? "Other",
                             CachedAt = DateTime.UtcNow
                         }).ToList();
 
@@ -204,13 +203,7 @@ public class TicketmasterService : ITicketmasterService
                         Start = new TicketmasterDateTime { DateTime = e.StartTime },
                         End = new TicketmasterDateTime { DateTime = e.EndTime }
                     },
-                    Classifications = new List<TicketmasterClassification>
-                    {
-                        new TicketmasterClassification
-                        {
-                            Segment = new TicketmasterSegment { Name = e.Category }
-                        }
-                    }
+                    Classifications = new List<TicketmasterClassification>()
                 }).ToList();
             }
         }

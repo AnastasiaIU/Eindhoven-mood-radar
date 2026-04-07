@@ -68,7 +68,6 @@ public class ApplicationDbContext : DbContext
             entity.HasKey(e => e.Id);
             entity.Property(e => e.Title).IsRequired().HasMaxLength(500);
             entity.Property(e => e.Source).IsRequired().HasMaxLength(100);
-            entity.Property(e => e.Category).HasMaxLength(100);
             entity.Property(e => e.StartTime).IsRequired();
             entity.Property(e => e.NeighborhoodId);
             entity.Property(e => e.CachedAt).HasDefaultValueSql("CURRENT_TIMESTAMP");
