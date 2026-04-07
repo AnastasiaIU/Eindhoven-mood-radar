@@ -1,10 +1,9 @@
 name: CI/CD Pipeline
 
 on:
-  pull_request:
-    branches: [main, develop]
-  push:
-    branches: [main]
+  # Temporarily disabled automatic runs.
+  # Use manual dispatch from GitHub Actions tab when needed.
+  workflow_dispatch:
 
 jobs:
   # Frontend: Lint and Build
