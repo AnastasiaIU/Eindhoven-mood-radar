@@ -10,7 +10,6 @@ jobs:
   frontend-ci:
     name: Frontend - Lint & Build
     runs-on: ubuntu-latest
-    working-directory: ./moonshot-webapp
 
     steps:
       - name: Checkout code
