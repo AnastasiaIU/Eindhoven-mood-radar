@@ -18,6 +18,8 @@ var connectionString = builder.Configuration.GetConnectionString("PostgreSQL")
 builder.Services.AddDbContext<ApplicationDbContext>(options =>
     options.UseNpgsql(connectionString));
 
+// Register mood update background service (runs every 15 minutes)
+builder.Services.AddHostedService<MoodUpdateService>();
 // Register Ticketmaster service as Singleton with HttpClient and service provider
 // IServiceProvider is used to get a scoped DbContext for saving data
 builder.Services.AddHttpClient<TicketmasterService>()
@@ -25,7 +27,7 @@ builder.Services.AddHttpClient<TicketmasterService>()
     {
         client.Timeout = TimeSpan.FromSeconds(30);
     });
-builder.Services.AddSingleton<ITicketmasterService>(sp => 
+builder.Services.AddScoped<ITicketmasterService>(sp => 
 {
     var httpClient = sp.GetRequiredService<HttpClient>();
     var logger = sp.GetRequiredService<ILogger<TicketmasterService>>();

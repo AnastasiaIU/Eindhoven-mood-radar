@@ -1,9 +1,8 @@
-namespace MoodRadar.API.Services;
-
 using MoodRadar.API.Data;
 using MoodRadar.API.Models.Domain;
 using Microsoft.EntityFrameworkCore;
 
+namespace MoodRadar.API.Services;
 /// <summary>
 /// Mock mood prediction service for Phase 1.
 /// Generates deterministic mood labels based on aggregated data.
@@ -35,74 +34,105 @@ public class MoodPredictionService
     {
         try
         {
-            using (var scope = _serviceProvider.CreateScope())
+            using var scope = _serviceProvider.CreateScope();
+            var dbContext = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
+
+            var neighborhoods = await dbContext.Neighborhoods.ToListAsync(cancellationToken);
+            var (forecastStartUtc, forecastEndUtcExclusive) = GetForecastWindowUtc();
+
+            _logger.LogInformation(
+                "Generating hourly mood forecasts for {Count} neighborhoods ({Start} to {End})",
+                neighborhoods.Count,
+                forecastStartUtc,
+                forecastEndUtcExclusive);
+
+            // Preload existing snapshots (IMPORTANT for UPSERT)
+            var existingSnapshots = await dbContext.NeighborhoodSnapshots
+                .Where(s => s.Timestamp >= forecastStartUtc && s.Timestamp < forecastEndUtcExclusive)
+                .Select(s => new NeighborhoodSnapshot
+                {
+                    Id = s.Id,
+                    NeighborhoodId = s.NeighborhoodId,
+                    Timestamp = DateTime.SpecifyKind(
+                        new DateTime(s.Timestamp.Year, s.Timestamp.Month, s.Timestamp.Day, s.Timestamp.Hour, 0, 0),
+                        DateTimeKind.Utc),
+                    MoodLabel = s.MoodLabel,
+                    Confidence = s.Confidence,
+                    FeatureJson = s.FeatureJson
+                })
+                .ToListAsync(cancellationToken);
+
+            var existingMap = existingSnapshots
+                .ToDictionary(x => (x.NeighborhoodId, x.Timestamp));
+
+            var eventsInWindow = await dbContext.Events
+                .AsNoTracking()
+                .Where(e => e.NeighborhoodId.HasValue
+                            && e.StartTime >= forecastStartUtc
+                            && e.StartTime < forecastEndUtcExclusive.AddHours(24))
+                .ToListAsync(cancellationToken);
+
+            var eventsByNeighborhood = eventsInWindow
+                .GroupBy(e => e.NeighborhoodId!.Value)
+                .ToDictionary(g => g.Key, g => g.ToList());
+
+            var latestWeather = await dbContext.Weathers
+                .AsNoTracking()
+                .OrderByDescending(w => w.SnapshotHour)
+                .FirstOrDefaultAsync(cancellationToken);
+
+            var predictions = new List<NeighborhoodSnapshot>();
+
+            foreach (var neighborhood in neighborhoods)
             {
-                var dbContext = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
+                var neighborhoodEvents = eventsByNeighborhood.TryGetValue(neighborhood.Id, out var value)
+                    ? value
+                    : new List<Event>();
 
-                // Get all neighborhoods
-                var neighborhoods = await dbContext.Neighborhoods.ToListAsync(cancellationToken);
-                var (forecastStartUtc, forecastEndUtcExclusive) = GetForecastWindowUtc();
-
-                _logger.LogInformation(
-                    "Generating hourly mood forecasts for {Count} neighborhoods ({Start} to {End})",
-                    neighborhoods.Count,
-                    forecastStartUtc,
-                    forecastEndUtcExclusive);
-
-                // Remove existing snapshots in the target forecast window to keep one row per hour.
-                var deletedCount = await dbContext.NeighborhoodSnapshots
-                    .Where(s => s.Timestamp >= forecastStartUtc && s.Timestamp < forecastEndUtcExclusive)
-                    .ExecuteDeleteAsync(cancellationToken);
-
-                if (deletedCount > 0)
+                for (var hourOffset = 0; hourOffset < 24; hourOffset++)
                 {
-                    _logger.LogInformation("Removed {Count} existing snapshots in forecast window", deletedCount);
-                }
+                    var predictionTimestamp = new DateTime(
+                        forecastStartUtc.Year,
+                        forecastStartUtc.Month,
+                        forecastStartUtc.Day,
+                        forecastStartUtc.Hour,
+                        0,
+                        0,
+                        DateTimeKind.Utc
+                    ).AddHours(hourOffset);
 
-                // Preload relevant events for the full 24-hour prediction horizon.
-                var eventsInWindow = await dbContext.Events
-                    .AsNoTracking()
-                    .Where(e => e.NeighborhoodId.HasValue
-                                && e.StartTime >= forecastStartUtc
-                                && e.StartTime < forecastEndUtcExclusive.AddHours(24))
-                    .ToListAsync(cancellationToken);
+                    var prediction = PredictMoodForNeighborhood(
+                        neighborhood,
+                        predictionTimestamp,
+                        neighborhoodEvents,
+                        latestWeather);
 
-                var eventsByNeighborhood = eventsInWindow
-                    .GroupBy(e => e.NeighborhoodId!.Value)
-                    .ToDictionary(g => g.Key, g => g.ToList());
+                    var key = (prediction.NeighborhoodId, prediction.Timestamp); ;
 
-                var latestWeather = await dbContext.Weathers
-                    .AsNoTracking()
-                    .OrderByDescending(w => w.SnapshotHour)
-                    .FirstOrDefaultAsync(cancellationToken);
-
-                var predictions = new List<NeighborhoodSnapshot>();
-
-                foreach (var neighborhood in neighborhoods)
-                {
-                    var neighborhoodEvents = eventsByNeighborhood.TryGetValue(neighborhood.Id, out var value)
-                        ? value
-                        : new List<Event>();
-
-                    for (var hourOffset = 0; hourOffset < 24; hourOffset++)
+                    if (existingMap.TryGetValue(key, out var existing))
                     {
-                        var predictionTimestamp = forecastStartUtc.AddHours(hourOffset);
-                        var prediction = PredictMoodForNeighborhood(
-                            neighborhood,
-                            predictionTimestamp,
-                            neighborhoodEvents,
-                            latestWeather);
-
+                        existing.MoodLabel = prediction.MoodLabel;
+                        existing.Confidence = prediction.Confidence;
+                        existing.FeatureJson = prediction.FeatureJson;
+                    }
+                    else
+                    {
                         predictions.Add(prediction);
                     }
                 }
-
-                // Store predictions
-                dbContext.NeighborhoodSnapshots.AddRange(predictions);
-                await dbContext.SaveChangesAsync(cancellationToken);
-                
-                _logger.LogInformation("Stored {Count} hourly mood snapshots to database", predictions.Count);
             }
+
+            // Only insert NEW ones
+            if (predictions.Count > 0)
+            {
+                dbContext.NeighborhoodSnapshots.AddRange(predictions);
+            }
+
+            await dbContext.SaveChangesAsync(cancellationToken);
+
+            _logger.LogInformation(
+                "Stored {Count} new snapshots and updated existing ones",
+                predictions.Count);
         }
         catch (Exception ex)
         {
