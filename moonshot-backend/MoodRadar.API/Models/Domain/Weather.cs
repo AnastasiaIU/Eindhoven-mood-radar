@@ -7,6 +7,7 @@ namespace MoodRadar.API.Models.Domain;
 /// </summary>
 public class Weather
 {
+    public int Id { get; set; }
     /// <summary>
     /// Hour timestamp (UTC), rounded to the nearest hour.
     /// Used as the primary key since each hour is unique.

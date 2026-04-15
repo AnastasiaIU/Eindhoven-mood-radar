@@ -2,6 +2,8 @@
 using Newtonsoft.Json.Linq;
 using MoodRadar.API.Models;
 using MoodRadar.API.Utilities;
+using MoodRadar.API.Data;
+using Microsoft.EntityFrameworkCore;
 
 namespace MoodRadar.API.Services
 {

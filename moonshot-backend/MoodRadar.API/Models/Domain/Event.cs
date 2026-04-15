@@ -66,4 +66,6 @@ public class Event
     /// Used to determine cache staleness.
     /// </summary>
     public DateTime CachedAt { get; set; } = DateTime.UtcNow;
+
+    public string RawData { get; set; }  // JSONB
 }

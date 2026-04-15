@@ -1,9 +1,11 @@
-namespace MoodRadar.API.Data;
-
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.ChangeTracking;
 using MoodRadar.API.Models.Domain;
+using MoodRadar.API.Models;
+using MoodRadar.API.Services;
 using System.Text.Json;
+
+namespace MoodRadar.API.Data;
 
 /// <summary>
 /// Entity Framework Core DbContext for MoodRadar application.
@@ -23,10 +25,14 @@ public class ApplicationDbContext : DbContext
     public DbSet<District> Districts => Set<District>();
     public DbSet<Quarter> Quarters => Set<Quarter>();
     public DbSet<Neighborhood> Neighborhoods => Set<Neighborhood>();
+    public DbSet<PsvMatch> PsvMatches => Set<PsvMatch>();
+    public DbSet<ZoneSnapshot> ZoneSnapshots { get; set; }
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         base.OnModelCreating(modelBuilder);
+        modelBuilder.Entity<PsvMatch>()
+        .HasKey(x => x.Id);
 
         // NeighborhoodSnapshot configuration
         modelBuilder.Entity<NeighborhoodSnapshot>(entity =>
@@ -122,6 +128,16 @@ public class ApplicationDbContext : DbContext
             entity.Property(e => e.GeoJsonBoundary).IsRequired();
             entity.Property(e => e.CreatedAt).HasDefaultValueSql("CURRENT_TIMESTAMP");
             entity.HasOne(e => e.Quarter).WithMany(q => q.Neighborhoods).HasForeignKey(e => e.QuarterId).OnDelete(DeleteBehavior.Cascade);
+        });
+        modelBuilder.Entity<PsvMatch>(entity =>
+        {
+            entity.Property(e => e.MatchDate).IsRequired();
+            entity.Property(e => e.Opponent).IsRequired().HasMaxLength(200);
+            entity.Property(e => e.HomeAway).IsRequired().HasMaxLength(10);
+            entity.Property(e => e.Status).IsRequired().HasMaxLength(50);
+
+            // Prevent duplicates (VERY important)
+            entity.HasIndex(e => new { e.MatchDate, e.Opponent }).IsUnique();
         });
     }
 
