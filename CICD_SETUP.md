@@ -23,10 +23,10 @@ dotnet run --environment Development
 # Runs on http://localhost:5000
 ```
 
-#### Frontend (Next.js)
+#### Frontend (React Native / Expo)
 
 ```bash
-cd moonshot-webapp
+cd moonshot-app
 npm install
 npm run dev
 # Runs on http://localhost:3000
@@ -59,7 +59,7 @@ Eindhoven-mood-radar/
 │   ├── WEATHER_IMPLEMENTATION.md
 │   ├── docs/api-contracts.md
 │   └── README.md
-├── moonshot-webapp/
+├── moonshot-app/
 │   ├── app/
 │   ├── components/
 │   ├── public/
@@ -87,7 +87,7 @@ Eindhoven-mood-radar/
 
 - Node.js 20
 - ESLint verification
-- Next.js build
+- React Native / Expo build
 
 **Backend** (`dotnet restore` → `dotnet build` → `dotnet test`):
 
@@ -135,7 +135,7 @@ NEXT_PUBLIC_API_URL=https://eindhoven-mood-radar-api.render.com
 
 ```bash
 # Frontend
-cd moonshot-webapp && npm ci && npm run lint && npm run build
+cd moonshot-app && npm ci && npm run lint && npm run build
 
 # Backend
 cd moonshot-backend && dotnet build && dotnet test
