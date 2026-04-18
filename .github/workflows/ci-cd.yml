@@ -20,19 +20,19 @@ jobs:
         with:
           node-version: '20'
           cache: 'npm'
-          cache-dependency-path: moonshot-webapp/package-lock.json
+          cache-dependency-path: moonshot-app/package-lock.json
 
       - name: Install dependencies
         run: npm ci
-        working-directory: ./moonshot-webapp
+        working-directory: ./moonshot-app
 
       - name: Run ESLint
         run: npm run lint
-        working-directory: ./moonshot-webapp
+        working-directory: ./moonshot-app
 
       - name: Build Next.js app
         run: npm run build
-        working-directory: ./moonshot-webapp
+        working-directory: ./moonshot-app
 
   # Backend: Build and Test
   backend-ci:
