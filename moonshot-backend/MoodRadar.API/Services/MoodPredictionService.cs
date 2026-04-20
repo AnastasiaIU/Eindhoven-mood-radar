@@ -3,18 +3,7 @@ using MoodRadar.API.Models.Domain;
 using Microsoft.EntityFrameworkCore;
 
 namespace MoodRadar.API.Services;
-/// <summary>
-/// Mock mood prediction service for Phase 1.
-/// Generates deterministic mood labels based on aggregated data.
-/// Will be replaced with real ML model in Phase 2.
-/// 
-/// Mood rules (simple heuristics):
-/// - Energetic: Many events (>5) + warm weather (>18°C) + evening (18:00-23:59)
-/// - Intense: PSV match + large events + crowd indicators
-/// - Busy: Many events (3-5) + daytime (08:00-17:59)
-/// - Relaxed: Few events (1-2) + mild weather + evening
-/// - Calm: No events + quiet hours (23:00-08:00) or cold (<10°C)
-/// </summary>
+
 public class MoodPredictionService
 {
     private readonly IServiceProvider _serviceProvider;
@@ -26,11 +15,7 @@ public class MoodPredictionService
         _logger = logger;
     }
 
-    /// <summary>
-    /// Generate 24-hour hourly mood forecasts for all neighborhoods and store in database.
-    /// Called by cron job after fetching all data sources.
-    /// </summary>
-    public async Task PredictAndStoreAsync(CancellationToken cancellationToken = default)
+    public async Task<int> PredictAndStoreAsync(CancellationToken cancellationToken = default)
     {
         try
         {
@@ -46,25 +31,28 @@ public class MoodPredictionService
                 forecastStartUtc,
                 forecastEndUtcExclusive);
 
-            // Preload existing snapshots (IMPORTANT for UPSERT)
+            // Load existing snapshots (tracked)
             var existingSnapshots = await dbContext.NeighborhoodSnapshots
                 .Where(s => s.Timestamp >= forecastStartUtc && s.Timestamp < forecastEndUtcExclusive)
-                .Select(s => new NeighborhoodSnapshot
-                {
-                    Id = s.Id,
-                    NeighborhoodId = s.NeighborhoodId,
-                    Timestamp = DateTime.SpecifyKind(
-                        new DateTime(s.Timestamp.Year, s.Timestamp.Month, s.Timestamp.Day, s.Timestamp.Hour, 0, 0),
-                        DateTimeKind.Utc),
-                    MoodLabel = s.MoodLabel,
-                    Confidence = s.Confidence,
-                    FeatureJson = s.FeatureJson
-                })
                 .ToListAsync(cancellationToken);
+
+            // Normalize timestamps
+            foreach (var s in existingSnapshots)
+            {
+                s.Timestamp = new DateTime(
+                    s.Timestamp.Year,
+                    s.Timestamp.Month,
+                    s.Timestamp.Day,
+                    s.Timestamp.Hour,
+                    0,
+                    0,
+                    DateTimeKind.Utc);
+            }
 
             var existingMap = existingSnapshots
                 .ToDictionary(x => (x.NeighborhoodId, x.Timestamp));
 
+            // Fetch events
             var eventsInWindow = await dbContext.Events
                 .AsNoTracking()
                 .Where(e => e.NeighborhoodId.HasValue
@@ -76,12 +64,14 @@ public class MoodPredictionService
                 .GroupBy(e => e.NeighborhoodId!.Value)
                 .ToDictionary(g => g.Key, g => g.ToList());
 
+            // Fetch latest weather
             var latestWeather = await dbContext.Weathers
                 .AsNoTracking()
                 .OrderByDescending(w => w.SnapshotHour)
                 .FirstOrDefaultAsync(cancellationToken);
 
             var predictions = new List<NeighborhoodSnapshot>();
+            int updatedCount = 0;
 
             foreach (var neighborhood in neighborhoods)
             {
@@ -89,17 +79,9 @@ public class MoodPredictionService
                     ? value
                     : new List<Event>();
 
-                for (var hourOffset = 0; hourOffset < 24; hourOffset++)
+                for (int hourOffset = 0; hourOffset < 24; hourOffset++)
                 {
-                    var predictionTimestamp = new DateTime(
-                        forecastStartUtc.Year,
-                        forecastStartUtc.Month,
-                        forecastStartUtc.Day,
-                        forecastStartUtc.Hour,
-                        0,
-                        0,
-                        DateTimeKind.Utc
-                    ).AddHours(hourOffset);
+                    var predictionTimestamp = forecastStartUtc.AddHours(hourOffset);
 
                     var prediction = PredictMoodForNeighborhood(
                         neighborhood,
@@ -107,13 +89,14 @@ public class MoodPredictionService
                         neighborhoodEvents,
                         latestWeather);
 
-                    var key = (prediction.NeighborhoodId, prediction.Timestamp); ;
+                    var key = (prediction.NeighborhoodId, prediction.Timestamp);
 
                     if (existingMap.TryGetValue(key, out var existing))
                     {
                         existing.MoodLabel = prediction.MoodLabel;
                         existing.Confidence = prediction.Confidence;
                         existing.FeatureJson = prediction.FeatureJson;
+                        updatedCount++;
                     }
                     else
                     {
@@ -122,7 +105,7 @@ public class MoodPredictionService
                 }
             }
 
-            // Only insert NEW ones
+            // Insert new snapshots
             if (predictions.Count > 0)
             {
                 dbContext.NeighborhoodSnapshots.AddRange(predictions);
@@ -131,46 +114,54 @@ public class MoodPredictionService
             await dbContext.SaveChangesAsync(cancellationToken);
 
             _logger.LogInformation(
-                "Stored {Count} new snapshots and updated existing ones",
-                predictions.Count);
+                "Stored {NewCount} new snapshots, updated {UpdatedCount}",
+                predictions.Count,
+                updatedCount);
+
+            return predictions.Count + updatedCount;
         }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Error generating mood predictions");
+            return 0;
         }
     }
 
-    /// <summary>
-    /// Generate a single mood prediction for a neighborhood at a specific hour.
-    /// </summary>
     private NeighborhoodSnapshot PredictMoodForNeighborhood(
         Neighborhood neighborhood,
         DateTime timestamp,
         IReadOnlyCollection<Event> neighborhoodEvents,
         Weather? latestWeather)
     {
-        // Forecast based on events occurring in the next 24 hours from this timestamp.
         var horizonEnd = timestamp.AddHours(24);
+
         var upcomingEvents = neighborhoodEvents
             .Where(e => e.StartTime >= timestamp && e.StartTime < horizonEnd)
             .ToList();
 
-        var eventCount = upcomingEvents.Count;
+        int eventCount = upcomingEvents.Count;
 
-        var hasLargeEvent = upcomingEvents.Any(e =>
-            e.Title.Contains("PSV", StringComparison.OrdinalIgnoreCase)
-            || e.Title.Contains("Football", StringComparison.OrdinalIgnoreCase)
-            || e.Title.Contains("Concert", StringComparison.OrdinalIgnoreCase));
+        bool hasLargeEvent = upcomingEvents.Any(e =>
+            e.Title != null &&
+            (
+                e.Title.Contains("PSV", StringComparison.OrdinalIgnoreCase) ||
+                e.Title.Contains("Football", StringComparison.OrdinalIgnoreCase) ||
+                e.Title.Contains("Concert", StringComparison.OrdinalIgnoreCase)
+            ));
 
-        // var isHoliday = await dbContext.Holidays
-        //     .AnyAsync(h => h.Date.Date == timestamp.Date, cancellationToken);
+        bool hasPsvMatch = upcomingEvents.Any(e =>
+            e.Title != null &&
+            e.Title.Contains("PSV", StringComparison.OrdinalIgnoreCase));
 
-        // Simple mood rules
         var (moodLabel, confidence) = DetermineMood(
-            eventCount, hasLargeEvent, false/*hasPsvMatch*/, latestWeather, false/*isHoliday*/, timestamp
-        );
+            eventCount,
+            hasLargeEvent,
+            hasPsvMatch,
+            latestWeather,
+            false,
+            timestamp);
 
-        var prediction = new NeighborhoodSnapshot
+        return new NeighborhoodSnapshot
         {
             NeighborhoodId = neighborhood.Id,
             Timestamp = timestamp,
@@ -180,31 +171,31 @@ public class MoodPredictionService
             {
                 { "event_count", eventCount },
                 { "has_large_event", hasLargeEvent },
-                { "has_psv_match", false/*hasPsvMatch*/ },
+                { "has_psv_match", hasPsvMatch },
                 { "temperature_c", latestWeather?.TemperatureC ?? 15.0 },
-                { "is_holiday", false/*isHoliday*/ },
+                { "is_holiday", false },
                 { "hour_of_day", timestamp.Hour },
-                // Flag data as stale if weather is older than 1 hour
                 { "is_stale", latestWeather == null || (timestamp - latestWeather.SnapshotHour).TotalMinutes > 60 }
             }
         };
-
-        return prediction;
     }
 
-    private static (DateTime ForecastStartUtc, DateTime ForecastEndUtcExclusive) GetForecastWindowUtc()
+    private static (DateTime Start, DateTime End) GetForecastWindowUtc()
     {
         var utcNow = DateTime.UtcNow;
-        var nextHourUtc = new DateTime(utcNow.Year, utcNow.Month, utcNow.Day, utcNow.Hour, 0, 0, DateTimeKind.Utc)
-            .AddHours(1);
 
-        return (nextHourUtc, nextHourUtc.AddHours(24));
+        var nextHour = new DateTime(
+            utcNow.Year,
+            utcNow.Month,
+            utcNow.Day,
+            utcNow.Hour,
+            0,
+            0,
+            DateTimeKind.Utc).AddHours(1);
+
+        return (nextHour, nextHour.AddHours(24));
     }
 
-    /// <summary>
-    /// Determine mood label based on aggregated features.
-    /// Returns (mood_label, confidence_score).
-    /// </summary>
     private (string moodLabel, double confidence) DetermineMood(
         int eventCount,
         bool hasLargeEvent,
@@ -213,66 +204,35 @@ public class MoodPredictionService
         bool isHoliday,
         DateTime timestamp)
     {
-        var temp = weather?.TemperatureC ?? 15.0;
-        var hour = timestamp.Hour;
-        var dayOfWeek = timestamp.DayOfWeek;
+        double temp = weather?.TemperatureC ?? 15.0;
+        int hour = timestamp.Hour;
 
-        // Weekend multiplier
-        var isWeekend = dayOfWeek == DayOfWeek.Saturday || dayOfWeek == DayOfWeek.Sunday;
-
-        // PSV match → Intense
         if (hasPsvMatch)
-        {
             return ("Intense", 0.95);
-        }
 
-        // Large event (concert, festival) → Intense
         if (hasLargeEvent && eventCount > 3)
-        {
             return ("Intense", 0.85);
-        }
 
-        // Many events (3+) during day → Busy
         if (eventCount >= 3 && hour >= 8 && hour < 18)
-        {
             return ("Busy", 0.80);
-        }
 
-        // Many events (5+) + warm evening → Energetic
-        if (eventCount >= 5 && temp >= 18 && hour >= 18 && hour < 24)
-        {
+        if (eventCount >= 5 && temp >= 18 && hour >= 18)
             return ("Energetic", 0.80);
-        }
 
-        // Few events + warm + evening → Relaxed
         if (eventCount <= 2 && temp >= 15 && hour >= 18)
-        {
             return ("Relaxed", 0.70);
-        }
 
-        // No events + night time → Calm
         if (eventCount == 0 && (hour < 8 || hour >= 23))
-        {
             return ("Calm", 0.85);
-        }
 
-        // Cold weather → Calm
         if (temp < 10 && eventCount <= 1)
-        {
             return ("Calm", 0.75);
-        }
 
-        // Holiday modifier
         if (isHoliday && eventCount >= 2)
-        {
             return ("Energetic", 0.75);
-        }
 
-        // Default: Relaxed or Calm based on event count
         if (eventCount == 0)
-        {
             return ("Calm", 0.60);
-        }
 
         return ("Relaxed", 0.65);
     }
