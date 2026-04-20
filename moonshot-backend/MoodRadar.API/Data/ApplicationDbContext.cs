@@ -26,7 +26,7 @@ public class ApplicationDbContext : DbContext
     public DbSet<Quarter> Quarters => Set<Quarter>();
     public DbSet<Neighborhood> Neighborhoods => Set<Neighborhood>();
     public DbSet<PsvMatch> PsvMatches => Set<PsvMatch>();
-    public DbSet<ZoneSnapshot> ZoneSnapshots { get; set; }
+    public DbSet<ModelRun> ModelRuns { get; set; }
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {

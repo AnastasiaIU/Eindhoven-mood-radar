@@ -13,15 +13,15 @@ public class ZoneSnapshotWorker : BackgroundService
 {
     private readonly IServiceProvider _serviceProvider;
     private readonly ILogger<ZoneSnapshotWorker> _logger;
-    private readonly IHttpClientFactory _httpClientFactory;
 
     private readonly TimeSpan _interval = TimeSpan.FromMinutes(60);
 
-    public ZoneSnapshotWorker(IServiceProvider serviceProvider,ILogger<ZoneSnapshotWorker> logger,IHttpClientFactory httpClientFactory)
+    public ZoneSnapshotWorker(
+        IServiceProvider serviceProvider,
+        ILogger<ZoneSnapshotWorker> logger)
     {
         _serviceProvider = serviceProvider;
         _logger = logger;
-        _httpClientFactory = httpClientFactory;
     }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -45,37 +45,51 @@ public class ZoneSnapshotWorker : BackgroundService
 
                 _logger.LogInformation("CRON START {RunId}", runId);
 
-                // 1. Fetch external data (ingestion layer)
+                // 1️⃣ Fetch external data
                 var events = await ticketService.PollEindhovenEventsAsync(stoppingToken);
                 var matches = await footballService.GetPsvMatchesAsync();
                 var weather = await weatherService.FetchEindhovenWeatherAsync(stoppingToken);
 
-                     // 3. Run ML prediction (should internally read from DB)
-                await predictionService.PredictAndStoreAsync(stoppingToken);
+                _logger.LogInformation("Fetched: {Events} events, {Matches} matches, {Weather} weather entries",
+                    events.Count, matches.Count, weather.Count);
 
-                // 4. Create snapshot
-                db.ZoneSnapshots.Add(new ZoneSnapshot
+                // 2️⃣ Run ML (THIS should store NeighborhoodSnapshots)
+                var zonesUpdated = await predictionService.PredictAndStoreAsync(stoppingToken);
+
+                // 3️⃣ Log run
+                db.ModelRuns.Add(new ModelRun
                 {
-                    CreatedAt = DateTime.UtcNow,
-                    EventCount = events.Count,
-                    PsvMatchCount = matches.Count,
-                    WeatherSummary = weather.FirstOrDefault()?.TemperatureC.ToString()
+                    RunAt = DateTime.UtcNow,
+                    ZonesUpdated = zonesUpdated,
+                    Errors = ""
                 });
+
                 await db.SaveChangesAsync(stoppingToken);
 
                 _logger.LogInformation("CRON SUCCESS {RunId}", runId);
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "CRON FAILED");
+                _logger.LogError(ex, "CRON FAILED {RunId}", runId);
+
+                using var scope = _serviceProvider.CreateScope();
+                var db = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
+
+                db.ModelRuns.Add(new ModelRun
+                {
+                    RunAt = DateTime.UtcNow,
+                    ZonesUpdated = 0,
+                    Errors = ex.Message
+                });
+
+                await db.SaveChangesAsync(stoppingToken);
             }
 
-            // Maintain strict 15-min interval (no drift)
             var elapsed = DateTime.UtcNow - startTime;
             var delay = _interval - elapsed;
 
             if (delay > TimeSpan.Zero)
                 await Task.Delay(delay, stoppingToken);
         }
-    } 
+    }
 }
