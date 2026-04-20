@@ -11,11 +11,15 @@ export default function TabLayout() {
             <Tabs.Screen
                 name="index"
                 options={{
-                    title: "Map",
+                    tabBarLabel: ({ color }) => (
+                        <Text className="text-xs font-normal" style={{ color }}>
+                            Map
+                        </Text>
+                    ),
                     tabBarIcon: ({ color }) => <Map color={color} size={24} />,
                     headerLeft: () => (
                         <View className="flex-row w-4/5 ml-auto">
-                            <Text className="font-bold text-3xl">Map</Text>
+                            <Text className="text-3xl font-semibold">Map</Text>
                         </View>
                     ),
                     headerTitle: "",
@@ -26,11 +30,15 @@ export default function TabLayout() {
             <Tabs.Screen
                 name="events"
                 options={{
-                    title: "Events",
+                    tabBarLabel: ({ color }) => (
+                        <Text className="text-xs font-normal" style={{ color }}>
+                            Events
+                        </Text>
+                    ),
                     tabBarIcon: ({ color }) => <PartyPopper color={color} size={24} />,
                     headerLeft: () => (
                         <View className="flex-row w-4/5 ml-auto">
-                            <Text className="font-bold text-3xl">Events</Text>
+                            <Text className="font-semibold text-3xl">Events</Text>
                         </View>
                     ),
                     headerTitle: "",
@@ -41,11 +49,15 @@ export default function TabLayout() {
             <Tabs.Screen
                 name="settings"
                 options={{
-                    title: "Settings",
+                    tabBarLabel: ({ color }) => (
+                        <Text className="text-xs font-normal" style={{ color }}>
+                            Settings
+                        </Text>
+                    ),
                     tabBarIcon: ({ color }) => <Settings color={color} size={24} />,
                     headerLeft: () => (
                         <View className="flex-row w-4/5 ml-auto">
-                            <Text className="font-bold text-3xl">Settings</Text>
+                            <Text className="font-semibold text-3xl">Settings</Text>
                         </View>
                     ),
                     headerTitle: "",

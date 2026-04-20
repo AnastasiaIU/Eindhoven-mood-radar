@@ -5,6 +5,18 @@
 
 @source './node_modules/heroui-native/lib';
 
+@theme {
+    --font-thin: 'Lexend-Thin';
+    --font-extralight: 'Lexend-ExtraLight';
+    --font-light: 'Lexend-Light';
+    --font-normal: 'Lexend-Regular';
+    --font-medium: 'Lexend-Medium';
+    --font-semibold: 'Lexend-SemiBold';
+    --font-bold: 'Lexend-Bold';
+    --font-extrabold: 'Lexend-ExtraBold';
+    --font-black: 'Lexend-Black';
+}
+
 @layer theme {
     @variant light {
         --accent: oklch(57.7% 0.245 27.325)
