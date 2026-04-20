@@ -32,7 +32,7 @@
          ▼                            ▼
     ┌─────────────┐          ┌──────────────┐
     │ Backend API │          │ Frontend App │
-    │ (.NET Core) │          │  (Next.js)   │
+    │ (.NET Core) │          │  (React Native / Expo)   │
     └─────────────┘          └──────────────┘
 ```
 
@@ -91,7 +91,7 @@ Click **Environment** and add:
 
 ---
 
-## 2. Frontend Deployment (Next.js)
+## 2. Frontend Deployment (React Native / Expo)
 
 ### Step 2.1: Create Frontend Service on Render
 
@@ -106,18 +106,18 @@ Click **Environment** and add:
 **Build Command**:
 
 ```bash
-cd moonshot-webapp && npm install && npm run build
+cd moonshot-app && npm install && npm run build
 ```
 
-**Publish Directory**: `moonshot-webapp/.next/standalone` (if using `output: 'standalone'` in `next.config.ts`)
+**Publish Directory**: `moonshot-app/.next/standalone` (if using `output: 'standalone'` in `next.config.ts`)
 or 
-`moonshot-webapp/.next` (for default Next.js builds)
+`moonshot-app/.next` (for default React Native / Expo builds)
 
 **Plan**: Free tier
 
 ### Step 2.3: Environment Variables (Optional)
 
-If your Next.js app needs backend API URL:
+If your React Native / Expo app needs backend API URL:
 
 | Key | Value | Notes |
 |-----|-------|-------|
@@ -299,5 +299,5 @@ async redirects() {
 
 - [Render Documentation](https://render.com/docs)
 - [Deploying .NET to Render](https://render.com/docs/deploy-dotnet)
-- [Deploying Next.js to Render](https://render.com/docs/deploy-nextjs)
+- [Deploying React Native / Expo to Render](https://render.com/docs/deploy-nextjs)
 - [GitHub Actions Docs](https://docs.github.com/en/actions)
