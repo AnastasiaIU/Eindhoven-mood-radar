@@ -1,0 +1,26 @@
+# Jupyter checkpoints
+.ipynb_checkpoints/
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Virtual environments
+venv/
+.env/
+.venv/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Data and models (optional – adjust these to what you want to keep out of Git)
+data/
+*.csv
+*.xlsx
+*.pickle
+*.pkl
+*.joblib
+models/
