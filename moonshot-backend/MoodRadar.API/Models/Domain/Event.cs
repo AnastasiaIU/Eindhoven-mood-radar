@@ -67,5 +67,5 @@ public class Event
     /// </summary>
     public DateTime CachedAt { get; set; } = DateTime.UtcNow;
 
-    public string RawData { get; set; }  // JSONB
+    public string? RawData { get; set; }  // JSONB
 }
